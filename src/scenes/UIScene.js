@@ -63,6 +63,23 @@ export class UIScene extends Phaser.Scene {
     this.scoreboardGraphics = this.add.graphics().setDepth(40);
     this.scoreboardTexts = [];
 
+    // ---- Upgrade history panel (Tab toggle) ----
+    this.upgradePanel = this.add.container(0, 0).setDepth(50).setVisible(false);
+    this.upgradePanelVisible = false;
+
+    this.input.keyboard.on('keydown-TAB', (e) => {
+      e.preventDefault();
+      this.upgradePanelVisible = !this.upgradePanelVisible;
+      if (this.upgradePanelVisible) {
+        this._buildUpgradePanel();
+      }
+      this.upgradePanel.setVisible(this.upgradePanelVisible);
+    });
+
+    this.add.text(w - 10, 10, '[TAB] Upgrades', {
+      fontSize: '11px', color: '#555',
+    }).setOrigin(1, 0).setDepth(20);
+
     // ---- Game over container ----
     this.gameOverContainer = this.add.container(w / 2, h / 2).setDepth(60).setVisible(false);
 
@@ -196,6 +213,86 @@ export class UIScene extends Phaser.Scene {
           this.scoreboardGraphics.lineStyle(1.5, 0x555555, 0.6);
           this.scoreboardGraphics.strokeCircle(dotX, dotY, DOT_RADIUS);
         }
+      }
+    });
+  }
+
+  // ---- Upgrade History Panel ----
+
+  _buildUpgradePanel() {
+    this.upgradePanel.removeAll(true);
+
+    const gameScene = this.scene.get('GameScene');
+    const history = gameScene.getUpgradeHistory();
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+
+    // Dim background
+    const dimBg = this.add.graphics();
+    dimBg.fillStyle(0x000000, 0.7);
+    dimBg.fillRect(0, 0, w, h);
+    this.upgradePanel.add(dimBg);
+
+    // Title
+    const title = this.add.text(w / 2, 30, 'Player Upgrades', {
+      fontSize: '24px', color: '#e94560', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.upgradePanel.add(title);
+
+    const colWidth = Math.min(240, (w - 40) / this.playerInfo.length);
+    const startX = (w - colWidth * this.playerInfo.length) / 2;
+
+    this.playerInfo.forEach((player, pIdx) => {
+      const cx = startX + pIdx * colWidth + colWidth / 2;
+      const colorIndex = pIdx;
+      const color = WIZARD_COLORS[colorIndex % WIZARD_COLORS.length];
+      const upgrades = history[player.peerId] || [];
+
+      // Player column background
+      const colBg = this.add.graphics();
+      colBg.fillStyle(0x16213e, 0.8);
+      colBg.fillRoundedRect(cx - colWidth / 2 + 4, 55, colWidth - 8, h - 100, 6);
+      colBg.lineStyle(1, color, 0.4);
+      colBg.strokeRoundedRect(cx - colWidth / 2 + 4, 55, colWidth - 8, h - 100, 6);
+      this.upgradePanel.add(colBg);
+
+      // Player name with color dot
+      const dot = this.add.graphics();
+      dot.fillStyle(color, 1);
+      dot.fillCircle(cx - 40, 75, 5);
+      this.upgradePanel.add(dot);
+
+      const nameText = this.add.text(cx - 30, 68, player.name, {
+        fontSize: '13px', color: '#fff', fontStyle: 'bold',
+      });
+      this.upgradePanel.add(nameText);
+
+      // List upgrades
+      if (upgrades.length === 0) {
+        const none = this.add.text(cx, 100, 'No upgrades', {
+          fontSize: '11px', color: '#555',
+        }).setOrigin(0.5, 0);
+        this.upgradePanel.add(none);
+      } else {
+        upgrades.forEach((uid, i) => {
+          const def = UPGRADES.find((u) => u.id === uid);
+          if (!def) return;
+
+          const uy = 98 + i * 26;
+          const rarityColor = RARITY_COLORS[def.rarity];
+
+          // Rarity dot
+          const rdot = this.add.graphics();
+          rdot.fillStyle(rarityColor, 1);
+          rdot.fillCircle(cx - colWidth / 2 + 16, uy + 7, 3);
+          this.upgradePanel.add(rdot);
+
+          const uText = this.add.text(cx - colWidth / 2 + 24, uy, def.title, {
+            fontSize: '11px',
+            color: '#' + rarityColor.toString(16).padStart(6, '0'),
+          });
+          this.upgradePanel.add(uText);
+        });
       }
     });
   }

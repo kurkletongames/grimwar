@@ -209,6 +209,7 @@ export class GameScene extends Phaser.Scene {
 
     // Per-player fireball upgrades: { speed, damage, knockback }
     this.playerUpgrades = new Map();
+    this.playerUpgradeHistory = new Map(); // playerId -> [upgradeId, ...]
 
     // Input — disable capture so HTML inputs (lobby name) still work
     this.keys = this.input.keyboard.addKeys({
@@ -275,9 +276,10 @@ export class GameScene extends Phaser.Scene {
     this.botIds = [];
     this.botLastFireball = {};
 
-    // Init scores and upgrades
+    // Init scores, upgrades, and history
     data.players.forEach((p) => {
       this.scores.set(p.peerId, 0);
+      this.playerUpgradeHistory.set(p.peerId, []);
       this.playerUpgrades.set(p.peerId, {
         speed: BASE_FIREBALL_SPEED,
         damage: BASE_FIREBALL_DAMAGE,
@@ -464,15 +466,20 @@ export class GameScene extends Phaser.Scene {
     // Blink toward cursor
     const pointer = this.input.activePointer;
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    const dirX = worldPoint.x - wizard.x;
-    const dirY = worldPoint.y - wizard.y;
+    const targetX = worldPoint.x;
+    const targetY = worldPoint.y;
+
+    // Compute direction from local position for local feedback
+    const dirX = targetX - wizard.x;
+    const dirY = targetY - wizard.y;
 
     if (network.isHost) {
       this._executeBlink(this.localPlayerId, dirX, dirY);
     } else {
       // Execute blink locally for immediate visual feedback
       this._executeLocalBlink(wizard, dirX, dirY);
-      network.sendInput({ type: 'input', action: 'blink', dirX, dirY });
+      // Send target position so host computes direction from authoritative position
+      network.sendInput({ type: 'input', action: 'blink', targetX, targetY });
     }
     this.lastBlinkTime = now;
     this.events.emit('blink-cast', now);
@@ -604,10 +611,14 @@ export class GameScene extends Phaser.Scene {
         if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
         this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
         break;
-      case 'blink':
-        if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
-        this._executeBlink(peerId, data.dirX, data.dirY);
+      case 'blink': {
+        // Client sends target position; compute direction from host's authoritative wizard position
+        if (!this._isFiniteNum(data.targetX) || !this._isFiniteNum(data.targetY)) return;
+        const blinkDirX = data.targetX - wizard.x;
+        const blinkDirY = data.targetY - wizard.y;
+        this._executeBlink(peerId, blinkDirX, blinkDirY);
         break;
+      }
     }
   }
 
@@ -819,12 +830,9 @@ export class GameScene extends Phaser.Scene {
         const dy = a.y - b.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < a.radius + b.radius) {
-          // Destroy only one (the one with lower damage; if equal, destroy b)
-          if (b.damage >= a.damage) {
-            a.alive = false;
-          } else {
-            b.alive = false;
-          }
+          // Both fireballs destroy each other
+          a.alive = false;
+          b.alive = false;
         }
       }
     }
@@ -1023,6 +1031,12 @@ export class GameScene extends Phaser.Scene {
     const def = UPGRADES.find((u) => u.id === upgradeId);
     if (!def) return;
     def.apply(upgrades);
+    const history = this.playerUpgradeHistory.get(playerId);
+    if (history) history.push(upgradeId);
+  }
+
+  getUpgradeHistory() {
+    return Object.fromEntries(this.playerUpgradeHistory);
   }
 
   startNextRound() {

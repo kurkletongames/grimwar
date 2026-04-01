@@ -515,6 +515,9 @@ export class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (!this.gameStarted || this.roundOver || this.countdownActive) return;
 
+    // Cap delta to prevent huge jumps if browser throttles background tabs
+    delta = Math.min(delta, 50); // Max ~20fps equivalent step
+
     this._processLocalInput();
 
     if (network.isHost) {

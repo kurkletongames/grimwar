@@ -8,6 +8,7 @@ const config = {
   height: 960,
   parent: 'game-container',
   backgroundColor: '#1a1a2e',
+  disableVisibilityChange: true, // Keep running when tab is hidden
   physics: {
     default: 'arcade',
     arcade: {

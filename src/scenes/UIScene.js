@@ -1,9 +1,6 @@
 import Phaser from 'phaser';
-import { FIREBALL_COOLDOWN } from '../entities/Fireball.js';
 import { WIZARD_COLORS } from '../entities/Wizard.js';
 import { UPGRADES } from './GameScene.js';
-
-const BLINK_COOLDOWN = 8000; // must match GameScene
 
 const RARITY_COLORS = {
   common:    0x888888,
@@ -40,69 +37,9 @@ export class UIScene extends Phaser.Scene {
   create() {
     const w = this.cameras.main.width;
     const h = this.cameras.main.height;
-    this.lastCastTime = 0;
     this.scores = {};
     this.playerInfo = [];
     this.winsToWin = 5;
-
-    // ---- Spell cooldown icon ----
-    const iconSize = 48;
-    const iconX = w / 2;
-    const iconY = h - 50;
-
-    this.spellBg = this.add.graphics();
-    this.spellBg.fillStyle(0x1a1a3e, 0.8);
-    this.spellBg.fillRoundedRect(iconX - iconSize / 2 - 4, iconY - iconSize / 2 - 4, iconSize + 8, iconSize + 8, 8);
-    this.spellBg.lineStyle(2, 0xe94560, 0.6);
-    this.spellBg.strokeRoundedRect(iconX - iconSize / 2 - 4, iconY - iconSize / 2 - 4, iconSize + 8, iconSize + 8, 8);
-
-    this.spellIcon = this.add.graphics();
-    this._drawFireballIcon(iconX, iconY, iconSize);
-
-    this.cooldownOverlay = this.add.graphics().setDepth(10);
-    this.cooldownText = this.add.text(iconX, iconY, '', {
-      fontSize: '16px', color: '#ffffff', fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(11);
-
-    this.add.text(iconX, iconY + iconSize / 2 + 12, 'Fireball', {
-      fontSize: '11px', color: '#aaa',
-    }).setOrigin(0.5);
-    this.add.text(iconX, iconY - iconSize / 2 - 14, 'LMB', {
-      fontSize: '10px', color: '#666',
-    }).setOrigin(0.5);
-
-    this.iconX = iconX;
-    this.iconY = iconY;
-    this.iconSize = iconSize;
-
-    // ---- Blink spell icon (right of fireball) ----
-    const blinkIconX = iconX + iconSize + 24;
-    const blinkIconY = iconY;
-
-    this.blinkBg = this.add.graphics();
-    this.blinkBg.fillStyle(0x1a1a3e, 0.8);
-    this.blinkBg.fillRoundedRect(blinkIconX - iconSize / 2 - 4, blinkIconY - iconSize / 2 - 4, iconSize + 8, iconSize + 8, 8);
-    this.blinkBg.lineStyle(2, 0x4fc3f7, 0.6);
-    this.blinkBg.strokeRoundedRect(blinkIconX - iconSize / 2 - 4, blinkIconY - iconSize / 2 - 4, iconSize + 8, iconSize + 8, 8);
-
-    this.blinkIcon = this.add.graphics();
-    this._drawBlinkIcon(blinkIconX, blinkIconY, iconSize);
-
-    this.blinkCooldownOverlay = this.add.graphics().setDepth(10);
-    this.blinkCooldownText = this.add.text(blinkIconX, blinkIconY, '', {
-      fontSize: '16px', color: '#ffffff', fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(11);
-
-    this.add.text(blinkIconX, blinkIconY + iconSize / 2 + 12, 'Blink', {
-      fontSize: '11px', color: '#aaa',
-    }).setOrigin(0.5);
-    this.add.text(blinkIconX, blinkIconY - iconSize / 2 - 14, 'SPACE', {
-      fontSize: '10px', color: '#666',
-    }).setOrigin(0.5);
-
-    this.blinkIconX = blinkIconX;
-    this.blinkIconY = blinkIconY;
-    this.lastBlinkCastTime = 0;
 
     // ---- Round text ----
     this.roundText = this.add.text(w / 2, 20, '', {
@@ -140,14 +77,6 @@ export class UIScene extends Phaser.Scene {
       this.scores = data.scores;
       this.winsToWin = data.winsToWin;
       this._drawScoreboard();
-    });
-
-    gameScene.events.on('fireball-cast', (castTime) => {
-      this.lastCastTime = castTime;
-    });
-
-    gameScene.events.on('blink-cast', (castTime) => {
-      this.lastBlinkCastTime = castTime;
     });
 
     gameScene.events.on('round-start', (roundNum) => {
@@ -282,7 +211,6 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.gameOverContainer.add(subText);
 
-    // Extend button
     const extBtnW = 200;
     const extBtnH = 44;
     const extBtn = this.add.graphics();
@@ -315,7 +243,6 @@ export class UIScene extends Phaser.Scene {
       this.scene.get('GameScene').extendGame();
     });
 
-    // Back to lobby
     const newBtnW = 200;
     const newBtnH = 44;
     const newBtn = this.add.graphics();
@@ -348,12 +275,10 @@ export class UIScene extends Phaser.Scene {
   // ---- Power-up cards with rarity ----
 
   _rollUpgrades(count) {
-    // Weighted random selection of upgrades by rarity
     const totalWeight = Object.values(RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
     const picked = [];
 
     while (picked.length < count && picked.length < UPGRADES.length) {
-      // Roll a rarity
       let roll = Math.random() * totalWeight;
       let rarity = 'common';
       for (const [r, w] of Object.entries(RARITY_WEIGHTS)) {
@@ -361,7 +286,6 @@ export class UIScene extends Phaser.Scene {
         if (roll <= 0) { rarity = r; break; }
       }
 
-      // Get upgrades of this rarity that aren't already picked
       const pool = UPGRADES.filter(
         (u) => u.rarity === rarity && !picked.find((p) => p.id === u.id)
       );
@@ -369,7 +293,6 @@ export class UIScene extends Phaser.Scene {
       if (pool.length > 0) {
         picked.push(pool[Math.floor(Math.random() * pool.length)]);
       }
-      // If no upgrades left in that rarity, re-roll (loop continues)
     }
 
     return picked;
@@ -408,25 +331,21 @@ export class UIScene extends Phaser.Scene {
       const rarityColor = RARITY_COLORS[opt.rarity];
       const rarityLabel = RARITY_LABELS[opt.rarity];
 
-      // Card background
       const card = this.add.graphics();
       this._drawCard(card, cx, cy, cardW, cardH, rarityColor, false);
       this.powerUpContainer.add(card);
 
-      // Rarity stripe at top
       const stripe = this.add.graphics();
       stripe.fillStyle(rarityColor, 0.3);
       stripe.fillRect(cx - cardW / 2 + 2, cy - cardH / 2 + 2, cardW - 4, 28);
       this.powerUpContainer.add(stripe);
 
-      // Rarity label
       const rarityText = this.add.text(cx, cy - cardH / 2 + 16, rarityLabel, {
         fontSize: '10px', color: '#' + rarityColor.toString(16).padStart(6, '0'),
         fontStyle: 'bold',
       }).setOrigin(0.5);
       this.powerUpContainer.add(rarityText);
 
-      // Icon glow
       const icon = this.add.graphics();
       icon.fillStyle(rarityColor, 0.8);
       icon.fillCircle(cx, cy - 40, 22);
@@ -434,21 +353,18 @@ export class UIScene extends Phaser.Scene {
       icon.fillCircle(cx, cy - 40, 30);
       this.powerUpContainer.add(icon);
 
-      // Title
       const titleText = this.add.text(cx, cy + 10, opt.title, {
         fontSize: '15px', color: '#fff', fontStyle: 'bold',
         align: 'center', wordWrap: { width: cardW - 24 },
       }).setOrigin(0.5);
       this.powerUpContainer.add(titleText);
 
-      // Description
       const descText = this.add.text(cx, cy + 45, opt.desc, {
         fontSize: '11px', color: '#aaa', align: 'center',
         wordWrap: { width: cardW - 24 }, lineSpacing: 2,
       }).setOrigin(0.5, 0);
       this.powerUpContainer.add(descText);
 
-      // Clickable zone
       const hitZone = this.add.zone(cx, cy, cardW, cardH).setInteractive({ useHandCursor: true });
       this.powerUpContainer.add(hitZone);
 
@@ -482,87 +398,5 @@ export class UIScene extends Phaser.Scene {
 
     this.powerUpContainer.setVisible(false);
     gameScene.startNextRound();
-  }
-
-  // ---- Icons ----
-
-  _drawBlinkIcon(x, y, size) {
-    this.blinkIcon.fillStyle(0x4fc3f7, 0.3);
-    this.blinkIcon.fillCircle(x, y, size * 0.35);
-    this.blinkIcon.fillStyle(0x4fc3f7, 0.9);
-    this.blinkIcon.fillTriangle(
-      x, y - size * 0.3,
-      x - size * 0.2, y + size * 0.1,
-      x + size * 0.2, y + size * 0.1
-    );
-    this.blinkIcon.lineStyle(2, 0x4fc3f7, 0.5);
-    this.blinkIcon.lineBetween(x - 4, y + size * 0.2, x - 4, y + size * 0.3);
-    this.blinkIcon.lineBetween(x + 4, y + size * 0.2, x + 4, y + size * 0.3);
-  }
-
-  _drawFireballIcon(x, y, size) {
-    this.spellIcon.fillStyle(0xff4400, 0.6);
-    this.spellIcon.fillCircle(x, y, size * 0.35);
-    this.spellIcon.fillStyle(0xff6600, 0.9);
-    this.spellIcon.fillCircle(x, y, size * 0.25);
-    this.spellIcon.fillStyle(0xffaa00, 1);
-    this.spellIcon.fillCircle(x, y, size * 0.12);
-  }
-
-  update() {
-    const now = Date.now();
-
-    // Fireball cooldown (use per-player CD from GameScene)
-    const gameScene = this.scene.get('GameScene');
-    const localCd = gameScene._getFireballCooldown
-      ? gameScene._getFireballCooldown(gameScene.localPlayerId)
-      : FIREBALL_COOLDOWN;
-
-    const elapsed = now - this.lastCastTime;
-    const remaining = localCd - elapsed;
-
-    this.cooldownOverlay.clear();
-
-    if (remaining > 0 && this.lastCastTime > 0) {
-      const pct = remaining / localCd;
-      const halfSize = this.iconSize / 2 + 4;
-
-      this.cooldownOverlay.fillStyle(0x000000, 0.6);
-      const startAngle = -Math.PI / 2;
-      const endAngle = startAngle + pct * Math.PI * 2;
-      this.cooldownOverlay.beginPath();
-      this.cooldownOverlay.moveTo(this.iconX, this.iconY);
-      this.cooldownOverlay.arc(this.iconX, this.iconY, halfSize, startAngle, endAngle, false);
-      this.cooldownOverlay.closePath();
-      this.cooldownOverlay.fillPath();
-
-      this.cooldownText.setText((remaining / 1000).toFixed(1));
-    } else {
-      this.cooldownText.setText('');
-    }
-
-    // Blink cooldown
-    const blinkElapsed = now - this.lastBlinkCastTime;
-    const blinkRemaining = BLINK_COOLDOWN - blinkElapsed;
-
-    this.blinkCooldownOverlay.clear();
-
-    if (blinkRemaining > 0 && this.lastBlinkCastTime > 0) {
-      const pct = blinkRemaining / BLINK_COOLDOWN;
-      const halfSize = this.iconSize / 2 + 4;
-
-      this.blinkCooldownOverlay.fillStyle(0x000000, 0.6);
-      const startAngle = -Math.PI / 2;
-      const endAngle = startAngle + pct * Math.PI * 2;
-      this.blinkCooldownOverlay.beginPath();
-      this.blinkCooldownOverlay.moveTo(this.blinkIconX, this.blinkIconY);
-      this.blinkCooldownOverlay.arc(this.blinkIconX, this.blinkIconY, halfSize, startAngle, endAngle, false);
-      this.blinkCooldownOverlay.closePath();
-      this.blinkCooldownOverlay.fillPath();
-
-      this.blinkCooldownText.setText((blinkRemaining / 1000).toFixed(1));
-    } else {
-      this.blinkCooldownText.setText('');
-    }
   }
 }

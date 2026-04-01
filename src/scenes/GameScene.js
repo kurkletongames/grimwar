@@ -1,0 +1,846 @@
+import Phaser from 'phaser';
+import { network } from '../network/NetworkManager.js';
+import { LobbyManager } from '../network/LobbyManager.js';
+import { Arena } from '../entities/Arena.js';
+import { Wizard } from '../entities/Wizard.js';
+import {
+  Fireball,
+  FIREBALL_COOLDOWN,
+  BASE_FIREBALL_SPEED,
+  BASE_FIREBALL_DAMAGE,
+  BASE_FIREBALL_KNOCKBACK,
+} from '../entities/Fireball.js';
+
+const TICK_RATE = 1000 / 20;
+const ROUND_END_DELAY = 2000; // ms before showing power-up screen
+const DEFAULT_WINS_TO_WIN = 5;
+const BLINK_DISTANCE = 120;
+const BLINK_COOLDOWN = 8000; // ms
+
+// Rarity: common (60%), rare (25%), epic (12%), legendary (3%)
+const RARITY = {
+  common:    { label: 'Common',    color: 0x888888, weight: 60 },
+  rare:      { label: 'Rare',      color: 0x4fc3f7, weight: 25 },
+  epic:      { label: 'Epic',      color: 0xab47bc, weight: 12 },
+  legendary: { label: 'Legendary', color: 0xffa726, weight: 3 },
+};
+
+export const UPGRADES = [
+  // ---- Common ----
+  {
+    id: 'damage_1',
+    title: 'Searing Flames',
+    desc: 'Fireball damage +5',
+    rarity: 'common',
+    apply: (u) => { u.damage += 5; },
+  },
+  {
+    id: 'speed_1',
+    title: 'Swift Cast',
+    desc: 'Fireball speed +40',
+    rarity: 'common',
+    apply: (u) => { u.speed += 40; },
+  },
+  {
+    id: 'knockback_1',
+    title: 'Concussive Blast',
+    desc: 'Fireball knockback +150',
+    rarity: 'common',
+    apply: (u) => { u.knockback += 150; },
+  },
+  {
+    id: 'cooldown_1',
+    title: 'Quick Hands',
+    desc: 'Fireball cooldown -300ms',
+    rarity: 'common',
+    apply: (u) => { u.cooldownReduction += 300; },
+  },
+  {
+    id: 'hp_1',
+    title: 'Tough Skin',
+    desc: 'Max HP +15',
+    rarity: 'common',
+    apply: (u) => { u.bonusHp += 15; },
+  },
+
+  // ---- Rare ----
+  {
+    id: 'multishot_1',
+    title: 'Split Bolt',
+    desc: 'Fire 1 additional fireball in a spread',
+    rarity: 'rare',
+    apply: (u) => { u.multishot += 1; },
+  },
+  {
+    id: 'radius_1',
+    title: 'Meteor Size',
+    desc: 'Fireball size +50%',
+    rarity: 'rare',
+    apply: (u) => { u.radius = Math.round(u.radius * 1.5); },
+  },
+  {
+    id: 'blink_range',
+    title: 'Phase Shift',
+    desc: 'Blink distance +60',
+    rarity: 'rare',
+    apply: (u) => { u.blinkDistance += 60; },
+  },
+  {
+    id: 'damage_2',
+    title: 'Inferno',
+    desc: 'Fireball damage +10',
+    rarity: 'rare',
+    apply: (u) => { u.damage += 10; },
+  },
+  {
+    id: 'cooldown_2',
+    title: 'Rapid Fire',
+    desc: 'Fireball cooldown -500ms',
+    rarity: 'rare',
+    apply: (u) => { u.cooldownReduction += 500; },
+  },
+  {
+    id: 'lifesteal_1',
+    title: 'Siphon',
+    desc: 'Heal for 20% of fireball damage dealt',
+    rarity: 'rare',
+    apply: (u) => { u.lifesteal += 0.2; },
+  },
+  {
+    id: 'hp_2',
+    title: 'Fortify',
+    desc: 'Max HP +30',
+    rarity: 'rare',
+    apply: (u) => { u.bonusHp += 30; },
+  },
+
+  // ---- Epic ----
+  {
+    id: 'blink_knockback',
+    title: 'Aftershock',
+    desc: 'Blink leaves a shockwave that knocks back nearby enemies',
+    rarity: 'epic',
+    apply: (u) => { u.blinkKnockback += 600; },
+  },
+  {
+    id: 'piercing',
+    title: 'Piercing Flame',
+    desc: 'Fireballs pass through enemies, hitting all in their path',
+    rarity: 'epic',
+    apply: (u) => { u.piercing = true; },
+  },
+  {
+    id: 'multishot_2',
+    title: 'Tri-Shot',
+    desc: 'Fire 2 additional fireballs in a spread',
+    rarity: 'epic',
+    apply: (u) => { u.multishot += 2; },
+  },
+  {
+    id: 'knockback_2',
+    title: 'Gale Force',
+    desc: 'Fireball knockback +400',
+    rarity: 'epic',
+    apply: (u) => { u.knockback += 400; },
+  },
+  {
+    id: 'lifesteal_2',
+    title: 'Soul Drain',
+    desc: 'Heal for 40% of fireball damage dealt',
+    rarity: 'epic',
+    apply: (u) => { u.lifesteal += 0.4; },
+  },
+
+  // ---- Legendary ----
+  {
+    id: 'multishot_3',
+    title: 'Barrage',
+    desc: 'Fire 3 additional fireballs in a wide spread',
+    rarity: 'legendary',
+    apply: (u) => { u.multishot += 3; },
+  },
+  {
+    id: 'glass_cannon',
+    title: 'Glass Cannon',
+    desc: 'Fireball damage +25, but fireball knockback on yourself +300',
+    rarity: 'legendary',
+    apply: (u) => { u.damage += 25; },
+  },
+  {
+    id: 'overcharge',
+    title: 'Overcharge',
+    desc: 'Fireball cooldown -800ms, speed +60, damage +8',
+    rarity: 'legendary',
+    apply: (u) => { u.cooldownReduction += 800; u.speed += 60; u.damage += 8; },
+  },
+];
+
+export class GameScene extends Phaser.Scene {
+  constructor() {
+    super({ key: 'GameScene' });
+  }
+
+  create() {
+    this.arena = null;
+    this.wizards = new Map();
+    this.fireballs = [];
+    this.gameStarted = false;
+    this.roundOver = false;
+    this.localPlayerId = '';
+    this.lastTickTime = 0;
+    this.lastFireballTime = 0;
+    this.lastBlinkTime = 0;
+    this.testMode = false;
+    this.countdownActive = false;
+    this._pendingTimers = [];
+    this.botIds = [];
+    this.botLastFireball = {};
+
+    // Round & score tracking
+    this.roundNumber = 0;
+    this.scores = new Map(); // playerId -> round wins
+    this.playerInfo = []; // saved from game start for respawning
+
+    // Per-player cooldown timestamps (for visual indicators on all wizards)
+    this.playerFireballTimes = new Map(); // playerId -> last cast time
+    this.playerBlinkTimes = new Map(); // playerId -> last cast time
+    this.winsToWin = DEFAULT_WINS_TO_WIN;
+
+    // Per-player fireball upgrades: { speed, damage, knockback }
+    this.playerUpgrades = new Map();
+
+    // Input
+    this.keys = this.input.keyboard.addKeys({
+      W: Phaser.Input.Keyboard.KeyCodes.W,
+      A: Phaser.Input.Keyboard.KeyCodes.A,
+      S: Phaser.Input.Keyboard.KeyCodes.S,
+      D: Phaser.Input.Keyboard.KeyCodes.D,
+      SPACE: Phaser.Input.Keyboard.KeyCodes.SPACE,
+    });
+
+    this.input.on('pointerdown', (pointer) => {
+      if (pointer.leftButtonDown()) {
+        this._handleLeftClick(pointer);
+      }
+    });
+
+    this.input.keyboard.on('keydown-SPACE', () => {
+      this._handleBlink();
+    });
+
+    this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Lobby
+    this.lobby = new LobbyManager((data) => this._startGame(data));
+
+    // Network
+    network.onGameState = (data) => this._applyGameState(data);
+    network.onPlayerInput = (peerId, data) => this._handleRemoteInput(peerId, data);
+  }
+
+  _startGame(data) {
+    this.gameStarted = true;
+    this.localPlayerId = network.localPlayerId;
+    this.testMode = data.testMode || false;
+    this.playerInfo = data.players;
+    this.botIds = [];
+    this.botLastFireball = {};
+
+    // Init scores and upgrades
+    data.players.forEach((p) => {
+      this.scores.set(p.peerId, 0);
+      this.playerUpgrades.set(p.peerId, {
+        speed: BASE_FIREBALL_SPEED,
+        damage: BASE_FIREBALL_DAMAGE,
+        knockback: BASE_FIREBALL_KNOCKBACK,
+        multishot: 1,
+        piercing: false,
+        cooldownReduction: 0,
+        radius: 8,
+        blinkKnockback: 0,
+        blinkDistance: BLINK_DISTANCE,
+        lifesteal: 0,
+        bonusHp: 0,
+      });
+      if (p.peerId.startsWith('bot-')) {
+        this.botIds.push(p.peerId);
+        this.botLastFireball[p.peerId] = 0;
+      }
+    });
+
+    this.winsToWin = DEFAULT_WINS_TO_WIN;
+
+    this.scene.launch('UIScene');
+
+    const emitAndStart = () => {
+      this.events.emit('game-started', {
+        players: data.players,
+        scores: Object.fromEntries(this.scores),
+        winsToWin: this.winsToWin,
+      });
+      this._startRound();
+    };
+
+    // UIScene.create() is async on first launch — check if already active
+    const uiScene = this.scene.get('UIScene');
+    if (uiScene.scene.isActive()) {
+      emitAndStart();
+    } else {
+      uiScene.events.once('create', emitAndStart);
+    }
+  }
+
+  _cancelPendingTimers() {
+    if (this._pendingTimers) {
+      this._pendingTimers.forEach((t) => t.remove(false));
+    }
+    this._pendingTimers = [];
+  }
+
+  _startRound() {
+    this._cancelPendingTimers();
+    this.roundNumber++;
+    this.roundOver = false;
+    this.countdownActive = true;
+    this.lastFireballTime = 0;
+
+    // Clean up old entities
+    this.fireballs.forEach((fb) => fb.destroy());
+    this.fireballs = [];
+    this.wizards.forEach((w) => w.destroy());
+    this.wizards.clear();
+
+    // Create/reset arena
+    const cx = this.cameras.main.width / 2;
+    const cy = this.cameras.main.height / 2;
+    if (this.arena) this.arena.destroy();
+    this.arena = new Arena(this, cx, cy);
+    this.arena.startRound();
+
+    // Spawn wizards
+    const spawnRadius = 300;
+    this.playerInfo.forEach((player, index) => {
+      const angle = (index / this.playerInfo.length) * Math.PI * 2 - Math.PI / 2;
+      const x = cx + Math.cos(angle) * spawnRadius;
+      const y = cy + Math.sin(angle) * spawnRadius;
+      const wizard = new Wizard(this, x, y, player.peerId, player.name, index);
+      const upgrades = this.playerUpgrades.get(player.peerId);
+      if (upgrades && upgrades.bonusHp > 0) {
+        wizard.maxHealth += upgrades.bonusHp;
+        wizard.health = wizard.maxHealth;
+      }
+      this.wizards.set(player.peerId, wizard);
+    });
+
+    this.events.emit('round-start', this.roundNumber);
+
+    // 3-second countdown
+    this.events.emit('countdown', 3);
+    this._pendingTimers.push(
+      this.time.delayedCall(1000, () => this.events.emit('countdown', 2)),
+      this.time.delayedCall(2000, () => this.events.emit('countdown', 1)),
+      this.time.delayedCall(3000, () => {
+        this.countdownActive = false;
+        this.events.emit('countdown', 0);
+      }),
+    );
+  }
+
+  _getFireballCooldown(playerId) {
+    const upgrades = this.playerUpgrades.get(playerId);
+    const reduction = upgrades ? upgrades.cooldownReduction : 0;
+    return Math.max(500, FIREBALL_COOLDOWN - reduction); // min 0.5s
+  }
+
+  _handleLeftClick(pointer) {
+    if (!this.gameStarted || this.roundOver || this.countdownActive) return;
+
+    const now = Date.now();
+    const cd = this._getFireballCooldown(this.localPlayerId);
+    if (now - this.lastFireballTime < cd) return;
+
+    const wizard = this.wizards.get(this.localPlayerId);
+    if (!wizard || !wizard.alive) return;
+
+    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const dirX = worldPoint.x - wizard.x;
+    const dirY = worldPoint.y - wizard.y;
+
+    if (network.isHost) {
+      this._spawnFireball(this.localPlayerId, wizard.x, wizard.y, dirX, dirY);
+      this.lastFireballTime = now;
+      this.events.emit('fireball-cast', now);
+    } else {
+      network.sendInput({ type: 'input', action: 'fireball', dirX, dirY });
+      this.lastFireballTime = now;
+      this.events.emit('fireball-cast', now);
+    }
+  }
+
+  _spawnFireball(playerId, x, y, dirX, dirY) {
+    const stats = this.playerUpgrades.get(playerId) || {};
+    const count = stats.multishot || 1;
+
+    if (count <= 1) {
+      const fireball = new Fireball(this, x, y, dirX, dirY, playerId, stats);
+      this.fireballs.push(fireball);
+    } else {
+      // Spread projectiles evenly across a 30-degree arc
+      const baseAngle = Math.atan2(dirY, dirX);
+      const spreadAngle = (Math.PI / 6); // 30 degrees total
+      for (let i = 0; i < count; i++) {
+        const offset = count === 1 ? 0 : -spreadAngle / 2 + (spreadAngle / (count - 1)) * i;
+        const angle = baseAngle + offset;
+        const fdx = Math.cos(angle);
+        const fdy = Math.sin(angle);
+        const fireball = new Fireball(this, x, y, fdx, fdy, playerId, stats);
+        this.fireballs.push(fireball);
+      }
+    }
+    this.playerFireballTimes.set(playerId, Date.now());
+  }
+
+  _handleBlink() {
+    if (!this.gameStarted || this.roundOver || this.countdownActive) return;
+
+    const now = Date.now();
+    if (now - this.lastBlinkTime < BLINK_COOLDOWN) return;
+
+    const wizard = this.wizards.get(this.localPlayerId);
+    if (!wizard || !wizard.alive) return;
+
+    // Blink toward cursor
+    const pointer = this.input.activePointer;
+    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const dirX = worldPoint.x - wizard.x;
+    const dirY = worldPoint.y - wizard.y;
+
+    if (network.isHost) {
+      this._executeBlink(this.localPlayerId, dirX, dirY);
+      this.lastBlinkTime = now;
+      this.events.emit('blink-cast', now);
+    } else {
+      network.sendInput({ type: 'input', action: 'blink', dirX, dirY });
+      this.lastBlinkTime = now;
+      this.events.emit('blink-cast', now);
+    }
+  }
+
+  _executeBlink(playerId, dirX, dirY) {
+    const wizard = this.wizards.get(playerId);
+    if (!wizard || !wizard.alive) return;
+
+    const upgrades = this.playerUpgrades.get(playerId) || {};
+    const blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+    const blinkKB = upgrades.blinkKnockback || 0;
+
+    const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+    const nx = dirX / len;
+    const ny = dirY / len;
+
+    const oldX = wizard.x;
+    const oldY = wizard.y;
+
+    // Teleport
+    wizard.x += nx * blinkDist;
+    wizard.y += ny * blinkDist;
+
+    // Kill any existing knockback on blink
+    wizard.knockbackVel.x = 0;
+    wizard.knockbackVel.y = 0;
+
+    // Constrain to wall
+    this.arena.constrainToWall(wizard);
+    this.playerBlinkTimes.set(playerId, Date.now());
+
+    // Blink knockback — push nearby enemies away from origin
+    if (blinkKB > 0) {
+      this.wizards.forEach((other) => {
+        if (other.playerId === playerId || !other.alive) return;
+        const dx = other.x - oldX;
+        const dy = other.y - oldY;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (dist < 80) {
+          const pushNx = dx / dist;
+          const pushNy = dy / dist;
+          const force = blinkKB * (1 - dist / 80); // falloff with distance
+          other.applyKnockback(pushNx * force, pushNy * force);
+        }
+      });
+
+      // Visual shockwave at origin
+      const shockwave = this.add.graphics();
+      shockwave.lineStyle(3, 0x4fc3f7, 0.7);
+      shockwave.strokeCircle(oldX, oldY, 10);
+      this.tweens.add({
+        targets: shockwave,
+        scaleX: 4, scaleY: 4, alpha: 0,
+        duration: 350,
+        onComplete: () => shockwave.destroy(),
+      });
+    }
+
+    // Afterimage at old position
+    const fx = this.add.graphics();
+    fx.fillStyle(0x4fc3f7, 0.5);
+    fx.fillCircle(oldX, oldY, wizard.radius);
+    this.tweens.add({
+      targets: fx,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => fx.destroy(),
+    });
+
+    wizard.draw();
+  }
+
+  _handleRemoteInput(peerId, data) {
+    if (!network.isHost) return;
+    const wizard = this.wizards.get(peerId);
+    if (!wizard || !wizard.alive) return;
+
+    switch (data.action) {
+      case 'move-dir':
+        wizard.setInput(data.x, data.y);
+        break;
+      case 'fireball':
+        this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
+        break;
+      case 'blink':
+        this._executeBlink(peerId, data.dirX, data.dirY);
+        break;
+    }
+  }
+
+  update(time, delta) {
+    if (!this.gameStarted || this.roundOver || this.countdownActive) return;
+
+    this._processLocalInput();
+
+    if (network.isHost) {
+      this._hostUpdate(delta);
+      if (time - this.lastTickTime > TICK_RATE) {
+        this._broadcastGameState();
+        this.lastTickTime = time;
+      }
+    } else {
+      // Client: update local wizard cooldown visuals from local timestamps
+      const localWizard = this.wizards.get(this.localPlayerId);
+      if (localWizard && localWizard.alive) {
+        const now = Date.now();
+        const fbElapsed = now - this.lastFireballTime;
+        const localCd = this._getFireballCooldown(this.localPlayerId);
+        const fbPct = this.lastFireballTime === 0 ? 0 : Math.max(0, 1 - fbElapsed / localCd);
+        const blinkReady = this.lastBlinkTime === 0 || (now - this.lastBlinkTime) >= BLINK_COOLDOWN;
+        localWizard.setCooldowns(fbPct, blinkReady);
+        localWizard.draw();
+      }
+    }
+
+    this.arena.draw();
+  }
+
+  _processLocalInput() {
+    const dirX = (this.keys.D.isDown ? 1 : 0) - (this.keys.A.isDown ? 1 : 0);
+    const dirY = (this.keys.S.isDown ? 1 : 0) - (this.keys.W.isDown ? 1 : 0);
+
+    if (network.isHost) {
+      const wizard = this.wizards.get(this.localPlayerId);
+      if (wizard && wizard.alive) wizard.setInput(dirX, dirY);
+    } else {
+      network.sendInput({ type: 'input', action: 'move-dir', x: dirX, y: dirY });
+    }
+  }
+
+  _updateBots() {
+    const now = Date.now();
+    for (const botId of this.botIds) {
+      const bot = this.wizards.get(botId);
+      if (!bot || !bot.alive) continue;
+
+      let nearest = null;
+      let nearestDist = Infinity;
+      this.wizards.forEach((w) => {
+        if (w.playerId === botId || !w.alive) return;
+        const dx = w.x - bot.x;
+        const dy = w.y - bot.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < nearestDist) { nearestDist = dist; nearest = w; }
+      });
+
+      if (!nearest) continue;
+
+      const dx = nearest.x - bot.x;
+      const dy = nearest.y - bot.y;
+
+      if (this.arena.isOnLava(bot.x, bot.y)) {
+        const tcx = this.arena.centerX - bot.x;
+        const tcy = this.arena.centerY - bot.y;
+        const len = Math.sqrt(tcx * tcx + tcy * tcy) || 1;
+        bot.setInput(tcx / len, tcy / len);
+      } else if (nearestDist > 160) {
+        const len = nearestDist || 1;
+        bot.setInput(dx / len, dy / len);
+      } else if (nearestDist < 80) {
+        const len = nearestDist || 1;
+        bot.setInput(-dx / len, -dy / len);
+      } else {
+        const len = nearestDist || 1;
+        bot.setInput(-dy / len * 0.5, dx / len * 0.5);
+      }
+
+      if (now - (this.botLastFireball[botId] || 0) > FIREBALL_COOLDOWN + 200 + Math.random() * 800) {
+        this._spawnFireball(botId, bot.x, bot.y, dx, dy);
+        this.botLastFireball[botId] = now;
+      }
+    }
+  }
+
+  _checkWizardCollisions() {
+    const wizardList = Array.from(this.wizards.values()).filter((w) => w.alive);
+    for (let i = 0; i < wizardList.length; i++) {
+      for (let j = i + 1; j < wizardList.length; j++) {
+        const a = wizardList[i];
+        const b = wizardList[j];
+
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const minDist = a.radius + b.radius;
+
+        if (dist >= minDist) continue;
+
+        // Separate overlapping wizards
+        const overlap = minDist - dist;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        a.x -= nx * overlap * 0.5;
+        a.y -= ny * overlap * 0.5;
+        b.x += nx * overlap * 0.5;
+        b.y += ny * overlap * 0.5;
+
+        // Transfer knockback: if one wizard is being knocked back, push the other
+        const aSpeed = Math.sqrt(a.knockbackVel.x ** 2 + a.knockbackVel.y ** 2);
+        const bSpeed = Math.sqrt(b.knockbackVel.x ** 2 + b.knockbackVel.y ** 2);
+        const transferRatio = 0.7;
+
+        if (aSpeed > 50) {
+          // A is moving fast, push B along collision normal
+          const push = aSpeed * transferRatio;
+          b.knockbackVel.x += nx * push;
+          b.knockbackVel.y += ny * push;
+          // Dampen A
+          a.knockbackVel.x *= 0.4;
+          a.knockbackVel.y *= 0.4;
+        }
+
+        if (bSpeed > 50) {
+          // B is moving fast, push A along collision normal
+          const push = bSpeed * transferRatio;
+          a.knockbackVel.x -= nx * push;
+          a.knockbackVel.y -= ny * push;
+          // Dampen B
+          b.knockbackVel.x *= 0.4;
+          b.knockbackVel.y *= 0.4;
+        }
+      }
+    }
+  }
+
+  _hostUpdate(delta) {
+    if (this.testMode) this._updateBots();
+
+    this.arena.update(delta);
+
+    const now = Date.now();
+    this.wizards.forEach((wizard) => {
+      wizard.update(delta);
+      if (wizard.alive) this.arena.constrainToWall(wizard);
+
+      // Update cooldown visuals for all wizards
+      const lastFb = this.playerFireballTimes.get(wizard.playerId) || 0;
+      const fbElapsed = now - lastFb;
+      const playerCd = this._getFireballCooldown(wizard.playerId);
+      const fbPct = lastFb === 0 ? 0 : Math.max(0, 1 - fbElapsed / playerCd);
+
+      const lastBlink = this.playerBlinkTimes.get(wizard.playerId) || 0;
+      const blinkElapsed = now - lastBlink;
+      const blinkReady = lastBlink === 0 || blinkElapsed >= BLINK_COOLDOWN;
+
+      wizard.setCooldowns(fbPct, blinkReady);
+    });
+
+    // Wizard-to-wizard collision (knockback transfer)
+    this._checkWizardCollisions();
+
+    this.fireballs.forEach((fb) => {
+      fb.update(delta);
+      this.wizards.forEach((wizard) => {
+        const dealt = fb.checkHit(wizard);
+        if (dealt > 0 && fb.lifesteal > 0) {
+          const owner = this.wizards.get(fb.ownerPlayerId);
+          if (owner && owner.alive) {
+            owner.health = Math.min(owner.maxHealth, owner.health + dealt * fb.lifesteal);
+          }
+        }
+      });
+    });
+
+    this.fireballs = this.fireballs.filter((fb) => {
+      if (!fb.alive) { fb.destroy(); return false; }
+      return true;
+    });
+
+    this.arena.applyLavaDamage(this.wizards, delta);
+
+    // Check round end
+    const aliveWizards = Array.from(this.wizards.values()).filter((w) => w.alive);
+    if (aliveWizards.length <= 1 && this.wizards.size > 1) {
+      this.roundOver = true;
+
+      // Redraw all wizards so dead ones visually fade out this frame
+      this.wizards.forEach((w) => w.draw());
+
+      const winner = aliveWizards[0];
+      const winnerName = winner ? winner.playerName : 'No one';
+
+      if (winner) {
+        this.scores.set(winner.playerId, (this.scores.get(winner.playerId) || 0) + 1);
+      }
+
+      if (!this.testMode) this._broadcastGameState();
+
+      // Check if someone won the whole game
+      const winnerScore = winner ? this.scores.get(winner.playerId) : 0;
+      const isGameOver = winnerScore >= this.winsToWin;
+
+      // Brief pause before announcing winner
+      this._pendingTimers.push(
+        this.time.delayedCall(500, () => {
+          this.events.emit('round-over', {
+            winnerName,
+            scores: Object.fromEntries(this.scores),
+            winsToWin: this.winsToWin,
+            isGameOver,
+          });
+
+          if (isGameOver) {
+            this.events.emit('game-over', {
+              winnerName,
+              scores: Object.fromEntries(this.scores),
+              winsToWin: this.winsToWin,
+            });
+          } else {
+            this._pendingTimers.push(
+              this.time.delayedCall(ROUND_END_DELAY, () => {
+                this._showPowerUpSelection();
+              })
+            );
+          }
+        })
+      );
+    }
+  }
+
+  _showPowerUpSelection() {
+    // For bots, randomly pick an upgrade
+    if (this.testMode) {
+      for (const botId of this.botIds) {
+        this._applyRandomBotUpgrade(botId);
+      }
+    }
+
+    this.events.emit('show-powerup-selection', {
+      currentUpgrades: Object.fromEntries(this.playerUpgrades),
+    });
+  }
+
+  _applyRandomBotUpgrade(botId) {
+    // Bots pick from all possible upgrade IDs
+    const allIds = UPGRADES.map((u) => u.id);
+    const pick = allIds[Math.floor(Math.random() * allIds.length)];
+    this.applyUpgrade(botId, pick);
+  }
+
+  applyUpgrade(playerId, upgradeId) {
+    const upgrades = this.playerUpgrades.get(playerId);
+    if (!upgrades) return;
+    const def = UPGRADES.find((u) => u.id === upgradeId);
+    if (!def) return;
+    def.apply(upgrades);
+  }
+
+  startNextRound() {
+    this._startRound();
+  }
+
+  extendGame() {
+    this.winsToWin += 2;
+    this.events.emit('game-extended', { winsToWin: this.winsToWin });
+    this._showPowerUpSelection();
+  }
+
+  getScores() {
+    return Object.fromEntries(this.scores);
+  }
+
+  getPlayerInfo() {
+    return this.playerInfo;
+  }
+
+  _broadcastGameState() {
+    const state = {
+      type: 'game-state',
+      arena: this.arena.serialize(),
+      wizards: Array.from(this.wizards.values()).map((w) => w.serialize()),
+      fireballs: this.fireballs.map((fb) => fb.serialize()),
+      scores: Object.fromEntries(this.scores),
+    };
+    network.broadcastToClients(state);
+  }
+
+  _applyGameState(data) {
+    if (network.isHost || this.roundOver) return;
+
+    if (this.arena && data.arena) this.arena.applyState(data.arena);
+
+    if (data.wizards) {
+      data.wizards.forEach((ws) => {
+        const wizard = this.wizards.get(ws.playerId);
+        if (wizard) wizard.applyState(ws);
+      });
+    }
+
+    this.fireballs.forEach((fb) => fb.destroy());
+    this.fireballs = [];
+    if (data.fireballs) {
+      data.fireballs.forEach((fbs) => {
+        if (fbs.alive) {
+          const fb = new Fireball(this, fbs.x, fbs.y, fbs.velX, fbs.velY, fbs.ownerPlayerId, {
+            damage: fbs.damage,
+            knockback: fbs.knockback,
+            radius: fbs.radius,
+            piercing: fbs.piercing,
+          });
+          fb.velX = fbs.velX;
+          fb.velY = fbs.velY;
+          this.fireballs.push(fb);
+        }
+      });
+    }
+
+    if (data.scores) {
+      Object.entries(data.scores).forEach(([id, wins]) => this.scores.set(id, wins));
+    }
+
+    const aliveWizards = Array.from(this.wizards.values()).filter((w) => w.alive);
+    if (aliveWizards.length <= 1 && this.wizards.size > 1 && !this.roundOver) {
+      this.roundOver = true;
+      const winner = aliveWizards[0];
+      this.events.emit('round-over', {
+        winnerName: winner ? winner.playerName : 'No one',
+        scores: Object.fromEntries(this.scores),
+      });
+    }
+  }
+}

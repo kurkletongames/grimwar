@@ -15,7 +15,7 @@ const TICK_RATE = 1000 / 30; // 30 ticks per second for smoother sync
 const ROUND_END_DELAY = 2000; // ms before showing power-up screen
 const DEFAULT_WINS_TO_WIN = 5;
 const BLINK_DISTANCE = 120;
-const BLINK_COOLDOWN = 8000; // ms
+const BLINK_COOLDOWN = 12000; // ms
 
 // Rarity: common (60%), rare (25%), epic (12%), legendary (3%)
 const RARITY = {
@@ -237,12 +237,29 @@ export class GameScene extends Phaser.Scene {
     // Network
     network.onGameState = (data) => this._applyGameState(data);
     network.onPlayerInput = (peerId, data) => this._handleRemoteInput(peerId, data);
+    network.onShowUpgrades = () => {
+      this.events.emit('show-powerup-selection', {
+        currentUpgrades: Object.fromEntries(this.playerUpgrades),
+      });
+    };
+    network.onUpgradeStatus = (data) => {
+      this.events.emit('upgrade-waiting', {
+        remaining: data.waiting.length,
+        total: data.total,
+      });
+    };
+    network.onStartRound = () => {
+      this._startRound();
+    };
 
     // Cleanup on scene shutdown
     this.events.on('shutdown', () => {
       this._cancelPendingTimers();
       network.onGameState = null;
       network.onPlayerInput = null;
+      network.onShowUpgrades = null;
+      network.onUpgradeStatus = null;
+      network.onStartRound = null;
     });
   }
 
@@ -476,9 +493,7 @@ export class GameScene extends Phaser.Scene {
     wizard.x += nx * blinkDist;
     wizard.y += ny * blinkDist;
 
-    // Kill any existing knockback on blink
-    wizard.knockbackVel.x = 0;
-    wizard.knockbackVel.y = 0;
+    // Knockback persists through blink — wizard keeps their momentum
 
     // Constrain to wall
     this.arena.constrainToWall(wizard);
@@ -533,6 +548,15 @@ export class GameScene extends Phaser.Scene {
 
   _handleRemoteInput(peerId, data) {
     if (!network.isHost) return;
+
+    // Upgrade selection — handle before wizard alive check (wizards don't exist between rounds)
+    if (data.action === 'upgrade') {
+      if (typeof data.upgradeId === 'string') {
+        this._receiveUpgradeChoice(peerId, data.upgradeId);
+      }
+      return;
+    }
+
     const wizard = this.wizards.get(peerId);
     if (!wizard || !wizard.alive) return;
 
@@ -808,20 +832,107 @@ export class GameScene extends Phaser.Scene {
   }
 
   _showPowerUpSelection() {
-    // For bots, randomly pick an upgrade
+    this._upgradesPending = new Set();
+    this._upgradeTimerStart = Date.now();
+
+    // Bots pick immediately
     if (this.testMode) {
       for (const botId of this.botIds) {
         this._applyRandomBotUpgrade(botId);
       }
     }
 
+    // Track which human players still need to pick
+    this.playerInfo.forEach((p) => {
+      if (!p.peerId.startsWith('bot-')) {
+        this._upgradesPending.add(p.peerId);
+      }
+    });
+
+    // Show selection UI locally (for host)
     this.events.emit('show-powerup-selection', {
       currentUpgrades: Object.fromEntries(this.playerUpgrades),
     });
+
+    // Tell clients to show their selection UI
+    if (!this.testMode) {
+      network.broadcastToClients({ type: 'show-upgrades' });
+    }
+
+    // Start the 30s auto-pick timer
+    this._upgradeAutoPickTimer = this.time.delayedCall(30000, () => {
+      this._autoPickForRemaining();
+    });
+    this._pendingTimers.push(this._upgradeAutoPickTimer);
+  }
+
+  _receiveUpgradeChoice(peerId, upgradeId) {
+    if (!this._upgradesPending || !this._upgradesPending.has(peerId)) return;
+    this.applyUpgrade(peerId, upgradeId);
+    this._upgradesPending.delete(peerId);
+    this._checkAllUpgradesPicked();
+  }
+
+  // Called when the local host player picks an upgrade
+  submitLocalUpgrade(upgradeId) {
+    this.applyUpgrade(this.localPlayerId, upgradeId);
+    if (this._upgradesPending) {
+      this._upgradesPending.delete(this.localPlayerId);
+    }
+    this._checkAllUpgradesPicked();
+  }
+
+  // Called when a client picks an upgrade (sends to host)
+  sendUpgradeChoice(upgradeId) {
+    network.sendInput({ type: 'input', action: 'upgrade', upgradeId });
+  }
+
+  _checkAllUpgradesPicked() {
+    if (!this._upgradesPending || this._upgradesPending.size > 0) {
+      // Broadcast waiting status to clients
+      if (!this.testMode) {
+        network.broadcastToClients({
+          type: 'upgrade-status',
+          waiting: Array.from(this._upgradesPending),
+          total: this.playerInfo.filter((p) => !p.peerId.startsWith('bot-')).length,
+        });
+      }
+      this.events.emit('upgrade-waiting', {
+        remaining: this._upgradesPending.size,
+        total: this.playerInfo.filter((p) => !p.peerId.startsWith('bot-')).length,
+      });
+      return;
+    }
+
+    // Everyone has picked — cancel timer and start next round
+    if (this._upgradeAutoPickTimer) {
+      this._upgradeAutoPickTimer.remove(false);
+    }
+    this.events.emit('upgrade-waiting', { remaining: 0, total: 0 });
+
+    // Brief delay then start
+    this._pendingTimers.push(
+      this.time.delayedCall(500, () => {
+        this._startRound();
+        if (!this.testMode) {
+          network.broadcastToClients({ type: 'game-start-round' });
+        }
+      })
+    );
+  }
+
+  _autoPickForRemaining() {
+    if (!this._upgradesPending) return;
+    const allIds = UPGRADES.map((u) => u.id);
+    for (const peerId of this._upgradesPending) {
+      const pick = allIds[Math.floor(Math.random() * allIds.length)];
+      this.applyUpgrade(peerId, pick);
+    }
+    this._upgradesPending.clear();
+    this._checkAllUpgradesPicked();
   }
 
   _applyRandomBotUpgrade(botId) {
-    // Bots pick from all possible upgrade IDs
     const allIds = UPGRADES.map((u) => u.id);
     const pick = allIds[Math.floor(Math.random() * allIds.length)];
     this.applyUpgrade(botId, pick);

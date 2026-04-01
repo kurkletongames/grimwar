@@ -200,6 +200,15 @@ export class NetworkManager {
         case 'game-state':
           if (this.onGameState) this.onGameState(data);
           break;
+        case 'show-upgrades':
+          if (this.onShowUpgrades) this.onShowUpgrades(data);
+          break;
+        case 'upgrade-status':
+          if (this.onUpgradeStatus) this.onUpgradeStatus(data);
+          break;
+        case 'game-start-round':
+          if (this.onStartRound) this.onStartRound(data);
+          break;
         case 'error':
           console.error('Server error:', data.message);
           break;

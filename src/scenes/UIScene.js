@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { WIZARD_COLORS } from '../entities/Wizard.js';
 import { UPGRADES } from './GameScene.js';
+import { network } from '../network/NetworkManager.js';
 
 const RARITY_COLORS = {
   common:    0x888888,
@@ -127,6 +128,15 @@ export class UIScene extends Phaser.Scene {
     gameScene.events.on('game-extended', (data) => {
       this.winsToWin = data.winsToWin;
       this._drawScoreboard();
+    });
+
+    gameScene.events.on('upgrade-waiting', (data) => {
+      if (data.remaining === 0) {
+        // All picked — hide the container (round will start shortly)
+        this.powerUpContainer.setVisible(false);
+      } else if (this.waitingSubText) {
+        this.waitingSubText.setText(`${data.remaining} of ${data.total} players still choosing...`);
+      }
     });
 
     gameScene.events.on('show-powerup-selection', () => {
@@ -394,9 +404,32 @@ export class UIScene extends Phaser.Scene {
     this.powerUpActive = false;
 
     const gameScene = this.scene.get('GameScene');
-    gameScene.applyUpgrade(gameScene.localPlayerId, upgradeId);
 
-    this.powerUpContainer.setVisible(false);
-    gameScene.startNextRound();
+    if (network.isHost) {
+      gameScene.submitLocalUpgrade(upgradeId);
+    } else {
+      gameScene.sendUpgradeChoice(upgradeId);
+    }
+
+    // Replace cards with waiting message
+    this.powerUpContainer.removeAll(true);
+
+    const dimBg = this.add.graphics();
+    dimBg.fillStyle(0x000000, 0.6);
+    dimBg.fillRect(
+      -this.cameras.main.width / 2, -this.cameras.main.height / 2,
+      this.cameras.main.width, this.cameras.main.height
+    );
+    this.powerUpContainer.add(dimBg);
+
+    this.waitingText = this.add.text(0, -10, 'Waiting for other players...', {
+      fontSize: '22px', color: '#888', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.powerUpContainer.add(this.waitingText);
+
+    this.waitingSubText = this.add.text(0, 25, '', {
+      fontSize: '14px', color: '#555',
+    }).setOrigin(0.5);
+    this.powerUpContainer.add(this.waitingSubText);
   }
 }

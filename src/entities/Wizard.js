@@ -223,8 +223,21 @@ export class Wizard {
   }
 
   applyState(state) {
-    this.x = state.x;
-    this.y = state.y;
+    // Smooth interpolation for position to avoid snapping
+    const dx = state.x - this.x;
+    const dy = state.y - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 200) {
+      // Too far off — snap (teleport/blink happened)
+      this.x = state.x;
+      this.y = state.y;
+    } else {
+      // Lerp toward authoritative position
+      this.x += dx * 0.3;
+      this.y += dy * 0.3;
+    }
+
     this.health = state.health;
     this.alive = state.alive;
     this.knockbackVel = { ...state.knockbackVel };

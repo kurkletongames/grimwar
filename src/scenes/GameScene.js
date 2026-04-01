@@ -11,7 +11,7 @@ import {
   BASE_FIREBALL_KNOCKBACK,
 } from '../entities/Fireball.js';
 
-const TICK_RATE = 1000 / 20;
+const TICK_RATE = 1000 / 30; // 30 ticks per second for smoother sync
 const ROUND_END_DELAY = 2000; // ms before showing power-up screen
 const DEFAULT_WINS_TO_WIN = 5;
 const BLINK_DISTANCE = 120;
@@ -527,17 +527,8 @@ export class GameScene extends Phaser.Scene {
         this.lastTickTime = time;
       }
     } else {
-      // Client: update local wizard cooldown visuals from local timestamps
-      const localWizard = this.wizards.get(this.localPlayerId);
-      if (localWizard && localWizard.alive) {
-        const now = Date.now();
-        const fbElapsed = now - this.lastFireballTime;
-        const localCd = this._getFireballCooldown(this.localPlayerId);
-        const fbPct = this.lastFireballTime === 0 ? 0 : Math.max(0, 1 - fbElapsed / localCd);
-        const blinkReady = this.lastBlinkTime === 0 || (now - this.lastBlinkTime) >= BLINK_COOLDOWN;
-        localWizard.setCooldowns(fbPct, blinkReady);
-        localWizard.draw();
-      }
+      // Client-side prediction: simulate locally between host updates
+      this._clientUpdate(delta);
     }
 
     this.arena.draw();
@@ -553,6 +544,37 @@ export class GameScene extends Phaser.Scene {
     } else {
       network.sendInput({ type: 'input', action: 'move-dir', x: dirX, y: dirY });
     }
+  }
+
+  _clientUpdate(delta) {
+    // Run local simulation so things move smoothly between host state updates
+    this.wizards.forEach((wizard) => {
+      wizard.update(delta);
+    });
+
+    // Move fireballs locally
+    this.fireballs.forEach((fb) => {
+      fb.update(delta);
+    });
+
+    // Remove expired fireballs
+    this.fireballs = this.fireballs.filter((fb) => {
+      if (!fb.alive) { fb.destroy(); return false; }
+      return true;
+    });
+
+    // Update cooldown visuals for local wizard
+    const localWizard = this.wizards.get(this.localPlayerId);
+    if (localWizard && localWizard.alive) {
+      const now = Date.now();
+      const fbElapsed = now - this.lastFireballTime;
+      const localCd = this._getFireballCooldown(this.localPlayerId);
+      const fbPct = this.lastFireballTime === 0 ? 0 : Math.max(0, 1 - fbElapsed / localCd);
+      const blinkReady = this.lastBlinkTime === 0 || (now - this.lastBlinkTime) >= BLINK_COOLDOWN;
+      localWizard.setCooldowns(fbPct, blinkReady);
+    }
+
+    this.arena.update(delta);
   }
 
   _updateBots() {
@@ -814,23 +836,36 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    this.fireballs.forEach((fb) => fb.destroy());
-    this.fireballs = [];
-    if (data.fireballs) {
-      data.fireballs.forEach((fbs) => {
-        if (fbs.alive) {
-          const fb = new Fireball(this, fbs.x, fbs.y, fbs.velX, fbs.velY, fbs.ownerPlayerId, {
-            damage: fbs.damage,
-            knockback: fbs.knockback,
-            radius: fbs.radius,
-            piercing: fbs.piercing,
-          });
-          fb.velX = fbs.velX;
-          fb.velY = fbs.velY;
-          this.fireballs.push(fb);
-        }
-      });
+    // Sync fireballs: match count and update positions instead of destroy/recreate
+    const serverFbs = (data.fireballs || []).filter((f) => f.alive);
+    // Remove excess local fireballs
+    while (this.fireballs.length > serverFbs.length) {
+      this.fireballs.pop().destroy();
     }
+    // Update existing and create missing
+    serverFbs.forEach((fbs, i) => {
+      if (i < this.fireballs.length) {
+        // Update existing fireball
+        const fb = this.fireballs[i];
+        fb.x = fbs.x;
+        fb.y = fbs.y;
+        fb.velX = fbs.velX;
+        fb.velY = fbs.velY;
+        fb.alive = fbs.alive;
+        fb.draw();
+      } else {
+        // Create new fireball
+        const fb = new Fireball(this, fbs.x, fbs.y, fbs.velX, fbs.velY, fbs.ownerPlayerId, {
+          damage: fbs.damage,
+          knockback: fbs.knockback,
+          radius: fbs.radius,
+          piercing: fbs.piercing,
+        });
+        fb.velX = fbs.velX;
+        fb.velY = fbs.velY;
+        this.fireballs.push(fb);
+      }
+    });
 
     if (data.scores) {
       Object.entries(data.scores).forEach(([id, wins]) => this.scores.set(id, wins));

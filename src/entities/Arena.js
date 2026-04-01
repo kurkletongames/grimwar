@@ -132,7 +132,7 @@ export class Arena {
   constrainToWall(wizard) {
     const dx = wizard.x - this.centerX;
     const dy = wizard.y - this.centerY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
+    const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
     const maxDist = this.wallRadius - wizard.radius;
 
     if (dist > maxDist) {

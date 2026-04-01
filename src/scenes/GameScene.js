@@ -162,9 +162,9 @@ export const UPGRADES = [
   {
     id: 'glass_cannon',
     title: 'Glass Cannon',
-    desc: 'Fireball damage +25, but fireball knockback on yourself +300',
+    desc: 'Fireball damage +25, but you get knocked back when firing',
     rarity: 'legendary',
-    apply: (u) => { u.damage += 25; },
+    apply: (u) => { u.damage += 25; u.selfKnockback += 300; },
   },
   {
     id: 'overcharge',
@@ -204,19 +204,20 @@ export class GameScene extends Phaser.Scene {
     // Per-player cooldown timestamps (for visual indicators on all wizards)
     this.playerFireballTimes = new Map(); // playerId -> last cast time
     this.playerBlinkTimes = new Map(); // playerId -> last cast time
+    this._blinkFxList = []; // track VFX graphics for cleanup
     this.winsToWin = DEFAULT_WINS_TO_WIN;
 
     // Per-player fireball upgrades: { speed, damage, knockback }
     this.playerUpgrades = new Map();
 
-    // Input
+    // Input — disable capture so HTML inputs (lobby name) still work
     this.keys = this.input.keyboard.addKeys({
       W: Phaser.Input.Keyboard.KeyCodes.W,
       A: Phaser.Input.Keyboard.KeyCodes.A,
       S: Phaser.Input.Keyboard.KeyCodes.S,
       D: Phaser.Input.Keyboard.KeyCodes.D,
       SPACE: Phaser.Input.Keyboard.KeyCodes.SPACE,
-    });
+    }, false, false); // enableCapture=false — don't preventDefault on these keys
 
     this.input.on('pointerdown', (pointer) => {
       if (pointer.leftButtonDown()) {
@@ -236,6 +237,13 @@ export class GameScene extends Phaser.Scene {
     // Network
     network.onGameState = (data) => this._applyGameState(data);
     network.onPlayerInput = (peerId, data) => this._handleRemoteInput(peerId, data);
+
+    // Cleanup on scene shutdown
+    this.events.on('shutdown', () => {
+      this._cancelPendingTimers();
+      network.onGameState = null;
+      network.onPlayerInput = null;
+    });
   }
 
   _startGame(data) {
@@ -261,6 +269,7 @@ export class GameScene extends Phaser.Scene {
         blinkDistance: BLINK_DISTANCE,
         lifesteal: 0,
         bonusHp: 0,
+        selfKnockback: 0,
       });
       if (p.peerId.startsWith('bot-')) {
         this.botIds.push(p.peerId);
@@ -291,7 +300,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   _cancelPendingTimers() {
-    this._stopHostSimLoop();
     if (this._pendingTimers) {
       this._pendingTimers.forEach((t) => t.remove(false));
     }
@@ -302,8 +310,21 @@ export class GameScene extends Phaser.Scene {
     this._cancelPendingTimers();
     this.roundNumber++;
     this.roundOver = false;
+    this.roundScoreAwarded = false;
     this.countdownActive = true;
     this.lastFireballTime = 0;
+    this.lastBlinkTime = 0;
+
+    // Reset per-player cooldown tracking
+    this.playerFireballTimes.clear();
+    this.playerBlinkTimes.clear();
+    this.botIds.forEach((botId) => { this.botLastFireball[botId] = 0; });
+
+    // Destroy lingering tween graphics
+    if (this._blinkFxList) {
+      this._blinkFxList.forEach((g) => { if (g && g.active) g.destroy(); });
+    }
+    this._blinkFxList = [];
 
     // Clean up old entities
     this.fireballs.forEach((fb) => fb.destroy());
@@ -343,7 +364,6 @@ export class GameScene extends Phaser.Scene {
       this.time.delayedCall(3000, () => {
         this.countdownActive = false;
         this.events.emit('countdown', 0);
-        if (network.isHost) this._startHostSimLoop();
       }),
     );
   }
@@ -400,6 +420,15 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.playerFireballTimes.set(playerId, Date.now());
+
+    // Self-knockback (Glass Cannon)
+    if (stats.selfKnockback > 0) {
+      const wizard = this.wizards.get(playerId);
+      if (wizard && wizard.alive) {
+        const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+        wizard.applyKnockback((-dirX / len) * stats.selfKnockback, (-dirY / len) * stats.selfKnockback);
+      }
+    }
   }
 
   _handleBlink() {
@@ -472,28 +501,34 @@ export class GameScene extends Phaser.Scene {
 
       // Visual shockwave at origin
       const shockwave = this.add.graphics();
+      this._blinkFxList.push(shockwave);
       shockwave.lineStyle(3, 0x4fc3f7, 0.7);
       shockwave.strokeCircle(oldX, oldY, 10);
       this.tweens.add({
         targets: shockwave,
         scaleX: 4, scaleY: 4, alpha: 0,
         duration: 350,
-        onComplete: () => shockwave.destroy(),
+        onComplete: () => { shockwave.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== shockwave); },
       });
     }
 
     // Afterimage at old position
     const fx = this.add.graphics();
+    this._blinkFxList.push(fx);
     fx.fillStyle(0x4fc3f7, 0.5);
     fx.fillCircle(oldX, oldY, wizard.radius);
     this.tweens.add({
       targets: fx,
       alpha: 0,
       duration: 300,
-      onComplete: () => fx.destroy(),
+      onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); },
     });
 
     wizard.draw();
+  }
+
+  _isFiniteNum(v) {
+    return typeof v === 'number' && isFinite(v);
   }
 
   _handleRemoteInput(peerId, data) {
@@ -503,44 +538,17 @@ export class GameScene extends Phaser.Scene {
 
     switch (data.action) {
       case 'move-dir':
+        if (!this._isFiniteNum(data.x) || !this._isFiniteNum(data.y)) return;
         wizard.setInput(data.x, data.y);
         break;
       case 'fireball':
+        if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
         this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
         break;
       case 'blink':
+        if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
         this._executeBlink(peerId, data.dirX, data.dirY);
         break;
-    }
-  }
-
-  _startHostSimLoop() {
-    this._stopHostSimLoop();
-    this._lastSimTime = Date.now();
-    this._simInterval = setInterval(() => {
-      if (!this.gameStarted || this.roundOver || this.countdownActive) return;
-
-      const now = Date.now();
-      let dt = now - this._lastSimTime;
-      this._lastSimTime = now;
-
-      // If tab was backgrounded and interval was throttled, run multiple
-      // capped steps to catch up (max 1 second of catch-up)
-      dt = Math.min(dt, 1000);
-      while (dt > 0) {
-        const step = Math.min(dt, TICK_RATE);
-        this._hostUpdate(step);
-        dt -= step;
-      }
-
-      this._broadcastGameState();
-    }, TICK_RATE);
-  }
-
-  _stopHostSimLoop() {
-    if (this._simInterval) {
-      clearInterval(this._simInterval);
-      this._simInterval = null;
     }
   }
 
@@ -552,16 +560,16 @@ export class GameScene extends Phaser.Scene {
 
     this._processLocalInput();
 
-    if (!network.isHost) {
-      // Client-side prediction: simulate locally between host updates
+    if (network.isHost) {
+      this._hostUpdate(delta);
+      if (time - this.lastTickTime > TICK_RATE) {
+        this._broadcastGameState();
+        this.lastTickTime = time;
+      }
+    } else {
       this._clientUpdate(delta);
     }
 
-    // Redraw arena (host rendering still done here, sim is in interval)
-    if (network.isHost) {
-      this.wizards.forEach((w) => w.draw());
-      this.fireballs.forEach((fb) => fb.draw());
-    }
     this.arena.draw();
   }
 
@@ -753,7 +761,6 @@ export class GameScene extends Phaser.Scene {
     const aliveWizards = Array.from(this.wizards.values()).filter((w) => w.alive);
     if (aliveWizards.length <= 1 && this.wizards.size > 1) {
       this.roundOver = true;
-      this._stopHostSimLoop();
 
       // Redraw all wizards so dead ones visually fade out this frame
       this.wizards.forEach((w) => w.draw());
@@ -761,7 +768,8 @@ export class GameScene extends Phaser.Scene {
       const winner = aliveWizards[0];
       const winnerName = winner ? winner.playerName : 'No one';
 
-      if (winner) {
+      if (winner && !this.roundScoreAwarded) {
+        this.roundScoreAwarded = true;
         this.scores.set(winner.playerId, (this.scores.get(winner.playerId) || 0) + 1);
       }
 
@@ -910,6 +918,7 @@ export class GameScene extends Phaser.Scene {
       this.events.emit('round-over', {
         winnerName: winner ? winner.playerName : 'No one',
         scores: Object.fromEntries(this.scores),
+        winsToWin: this.winsToWin,
       });
     }
   }

@@ -291,6 +291,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _cancelPendingTimers() {
+    this._stopHostSimLoop();
     if (this._pendingTimers) {
       this._pendingTimers.forEach((t) => t.remove(false));
     }
@@ -342,6 +343,7 @@ export class GameScene extends Phaser.Scene {
       this.time.delayedCall(3000, () => {
         this.countdownActive = false;
         this.events.emit('countdown', 0);
+        if (network.isHost) this._startHostSimLoop();
       }),
     );
   }
@@ -512,25 +514,54 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  _startHostSimLoop() {
+    this._stopHostSimLoop();
+    this._lastSimTime = Date.now();
+    this._simInterval = setInterval(() => {
+      if (!this.gameStarted || this.roundOver || this.countdownActive) return;
+
+      const now = Date.now();
+      let dt = now - this._lastSimTime;
+      this._lastSimTime = now;
+
+      // If tab was backgrounded and interval was throttled, run multiple
+      // capped steps to catch up (max 1 second of catch-up)
+      dt = Math.min(dt, 1000);
+      while (dt > 0) {
+        const step = Math.min(dt, TICK_RATE);
+        this._hostUpdate(step);
+        dt -= step;
+      }
+
+      this._broadcastGameState();
+    }, TICK_RATE);
+  }
+
+  _stopHostSimLoop() {
+    if (this._simInterval) {
+      clearInterval(this._simInterval);
+      this._simInterval = null;
+    }
+  }
+
   update(time, delta) {
     if (!this.gameStarted || this.roundOver || this.countdownActive) return;
 
-    // Cap delta to prevent huge jumps if browser throttles background tabs
-    delta = Math.min(delta, 50); // Max ~20fps equivalent step
+    // Cap delta to prevent huge jumps
+    delta = Math.min(delta, 50);
 
     this._processLocalInput();
 
-    if (network.isHost) {
-      this._hostUpdate(delta);
-      if (time - this.lastTickTime > TICK_RATE) {
-        this._broadcastGameState();
-        this.lastTickTime = time;
-      }
-    } else {
+    if (!network.isHost) {
       // Client-side prediction: simulate locally between host updates
       this._clientUpdate(delta);
     }
 
+    // Redraw arena (host rendering still done here, sim is in interval)
+    if (network.isHost) {
+      this.wizards.forEach((w) => w.draw());
+      this.fireballs.forEach((fb) => fb.draw());
+    }
     this.arena.draw();
   }
 
@@ -722,6 +753,7 @@ export class GameScene extends Phaser.Scene {
     const aliveWizards = Array.from(this.wizards.values()).filter((w) => w.alive);
     if (aliveWizards.length <= 1 && this.wizards.size > 1) {
       this.roundOver = true;
+      this._stopHostSimLoop();
 
       // Redraw all wizards so dead ones visually fade out this frame
       this.wizards.forEach((w) => w.draw());

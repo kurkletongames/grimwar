@@ -142,6 +142,10 @@ export class UIScene extends Phaser.Scene {
     gameScene.events.on('show-powerup-selection', () => {
       this._showPowerUpCards();
     });
+
+    gameScene.events.on('winner-skip-upgrade', () => {
+      this._showWinnerWaiting();
+    });
   }
 
   // ---- Scoreboard ----
@@ -390,6 +394,35 @@ export class UIScene extends Phaser.Scene {
         this._selectUpgrade(opt.id);
       });
     });
+  }
+
+  _showWinnerWaiting() {
+    this.powerUpContainer.removeAll(true);
+    this.powerUpContainer.setVisible(true);
+
+    const dimBg = this.add.graphics();
+    dimBg.fillStyle(0x000000, 0.6);
+    dimBg.fillRect(
+      -this.cameras.main.width / 2, -this.cameras.main.height / 2,
+      this.cameras.main.width, this.cameras.main.height
+    );
+    this.powerUpContainer.add(dimBg);
+
+    const skipText = this.add.text(0, -20, 'You won the round!', {
+      fontSize: '26px', color: '#e94560', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    this.powerUpContainer.add(skipText);
+
+    this.waitingText = this.add.text(0, 20, 'Others are choosing upgrades...', {
+      fontSize: '16px', color: '#888',
+    }).setOrigin(0.5);
+    this.powerUpContainer.add(this.waitingText);
+
+    this.waitingSubText = this.add.text(0, 48, '', {
+      fontSize: '14px', color: '#555',
+    }).setOrigin(0.5);
+    this.powerUpContainer.add(this.waitingSubText);
   }
 
   _drawCard(g, cx, cy, w, h, color, hovered) {

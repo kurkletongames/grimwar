@@ -137,6 +137,15 @@ export class Wizard {
           this.cooldownGraphics.strokePath();
         }
       }
+
+      // Blink ready dot indicator
+      if (this.blinkReady) {
+        this.cooldownGraphics.fillStyle(0x4fc3f7, 0.9);
+        this.cooldownGraphics.fillCircle(this.x, this.y + this.radius + 8, 3);
+      } else {
+        this.cooldownGraphics.fillStyle(0x333333, 0.4);
+        this.cooldownGraphics.fillCircle(this.x, this.y + this.radius + 8, 3);
+      }
     }
   }
 

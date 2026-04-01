@@ -92,7 +92,7 @@ export class Fireball {
     const dy = this.y - wizard.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    if (dist < this.radius + wizard.radius) {
+    if (dist < this.radius * 2 + wizard.radius) {
       const prevHealth = wizard.health;
       wizard.takeDamage(this.damage);
       const dealt = prevHealth - wizard.health;

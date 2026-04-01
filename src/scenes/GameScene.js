@@ -120,7 +120,7 @@ export const UPGRADES = [
     title: 'Aftershock',
     desc: 'Blink leaves a shockwave that knocks back nearby enemies',
     rarity: 'epic',
-    apply: (u) => { u.blinkKnockback += 600; },
+    apply: (u) => { u.blinkKnockback += 900; },
   },
   {
     id: 'piercing',
@@ -237,10 +237,14 @@ export class GameScene extends Phaser.Scene {
     // Network
     network.onGameState = (data) => this._applyGameState(data);
     network.onPlayerInput = (peerId, data) => this._handleRemoteInput(peerId, data);
-    network.onShowUpgrades = () => {
-      this.events.emit('show-powerup-selection', {
-        currentUpgrades: Object.fromEntries(this.playerUpgrades),
-      });
+    network.onShowUpgrades = (data) => {
+      if (data.winnerId === this.localPlayerId) {
+        this.events.emit('winner-skip-upgrade');
+      } else {
+        this.events.emit('show-powerup-selection', {
+          currentUpgrades: Object.fromEntries(this.playerUpgrades),
+        });
+      }
     };
     network.onUpgradeStatus = (data) => {
       this.events.emit('upgrade-waiting', {
@@ -465,13 +469,13 @@ export class GameScene extends Phaser.Scene {
 
     if (network.isHost) {
       this._executeBlink(this.localPlayerId, dirX, dirY);
-      this.lastBlinkTime = now;
-      this.events.emit('blink-cast', now);
     } else {
+      // Execute blink locally for immediate visual feedback
+      this._executeLocalBlink(wizard, dirX, dirY);
       network.sendInput({ type: 'input', action: 'blink', dirX, dirY });
-      this.lastBlinkTime = now;
-      this.events.emit('blink-cast', now);
     }
+    this.lastBlinkTime = now;
+    this.events.emit('blink-cast', now);
   }
 
   _executeBlink(playerId, dirX, dirY) {
@@ -500,16 +504,17 @@ export class GameScene extends Phaser.Scene {
     this.playerBlinkTimes.set(playerId, Date.now());
 
     // Blink knockback — push nearby enemies away from origin
+    const shockwaveRange = 140;
     if (blinkKB > 0) {
       this.wizards.forEach((other) => {
         if (other.playerId === playerId || !other.alive) return;
         const dx = other.x - oldX;
         const dy = other.y - oldY;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        if (dist < 80) {
+        if (dist < shockwaveRange) {
           const pushNx = dx / dist;
           const pushNy = dy / dist;
-          const force = blinkKB * (1 - dist / 80); // falloff with distance
+          const force = blinkKB * (1 - dist / shockwaveRange);
           other.applyKnockback(pushNx * force, pushNy * force);
         }
       });
@@ -537,6 +542,36 @@ export class GameScene extends Phaser.Scene {
       alpha: 0,
       duration: 300,
       onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); },
+    });
+
+    wizard.draw();
+  }
+
+  _executeLocalBlink(wizard, dirX, dirY) {
+    const upgrades = this.playerUpgrades.get(wizard.playerId) || {};
+    const blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+
+    const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+    const nx = dirX / len;
+    const ny = dirY / len;
+
+    const oldX = wizard.x;
+    const oldY = wizard.y;
+
+    wizard.x += nx * blinkDist;
+    wizard.y += ny * blinkDist;
+
+    this.arena.constrainToWall(wizard);
+
+    // Afterimage
+    const fx = this.add.graphics();
+    fx.fillStyle(0x4fc3f7, 0.5);
+    fx.fillCircle(oldX, oldY, wizard.radius);
+    this.tweens.add({
+      targets: fx,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => fx.destroy(),
     });
 
     wizard.draw();
@@ -615,15 +650,13 @@ export class GameScene extends Phaser.Scene {
       wizard.update(delta);
     });
 
-    // Move fireballs locally
+    // Move fireballs locally using their velocity (no trail/lifetime — host handles that)
+    const dt = delta / 1000;
     this.fireballs.forEach((fb) => {
-      fb.update(delta);
-    });
-
-    // Remove expired fireballs
-    this.fireballs = this.fireballs.filter((fb) => {
-      if (!fb.alive) { fb.destroy(); return false; }
-      return true;
+      if (!fb.alive) return;
+      fb.x += fb.velX * dt;
+      fb.y += fb.velY * dt;
+      fb.draw();
     });
 
     // Update cooldown visuals for local wizard
@@ -774,6 +807,35 @@ export class GameScene extends Phaser.Scene {
       });
     });
 
+    // Fireball-vs-fireball collision (different owners only, one destroys the other)
+    for (let i = 0; i < this.fireballs.length; i++) {
+      const a = this.fireballs[i];
+      if (!a.alive) continue;
+      for (let j = i + 1; j < this.fireballs.length; j++) {
+        const b = this.fireballs[j];
+        if (!b.alive) continue;
+        if (a.ownerPlayerId === b.ownerPlayerId) continue;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < a.radius + b.radius) {
+          // Destroy only one (the one with lower damage; if equal, destroy b)
+          if (b.damage >= a.damage) {
+            a.alive = false;
+          } else {
+            b.alive = false;
+          }
+        }
+      }
+    }
+
+    // Destroy fireballs that hit the wall
+    this.fireballs.forEach((fb) => {
+      if (fb.alive && this.arena.isOutsideWall(fb.x, fb.y)) {
+        fb.alive = false;
+      }
+    });
+
     this.fireballs = this.fireballs.filter((fb) => {
       if (!fb.alive) { fb.destroy(); return false; }
       return true;
@@ -795,6 +857,9 @@ export class GameScene extends Phaser.Scene {
       if (winner && !this.roundScoreAwarded) {
         this.roundScoreAwarded = true;
         this.scores.set(winner.playerId, (this.scores.get(winner.playerId) || 0) + 1);
+        this._roundWinnerId = winner.playerId;
+      } else {
+        this._roundWinnerId = null;
       }
 
       if (!this.testMode) this._broadcastGameState();
@@ -834,29 +899,43 @@ export class GameScene extends Phaser.Scene {
   _showPowerUpSelection() {
     this._upgradesPending = new Set();
     this._upgradeTimerStart = Date.now();
+    const winnerId = this._roundWinnerId;
 
-    // Bots pick immediately
+    // Bots pick immediately (skip the winner bot)
     if (this.testMode) {
       for (const botId of this.botIds) {
-        this._applyRandomBotUpgrade(botId);
+        if (botId !== winnerId) {
+          this._applyRandomBotUpgrade(botId);
+        }
       }
     }
 
-    // Track which human players still need to pick
+    // Track which human players still need to pick (skip the winner)
     this.playerInfo.forEach((p) => {
-      if (!p.peerId.startsWith('bot-')) {
+      if (!p.peerId.startsWith('bot-') && p.peerId !== winnerId) {
         this._upgradesPending.add(p.peerId);
       }
     });
 
-    // Show selection UI locally (for host)
-    this.events.emit('show-powerup-selection', {
-      currentUpgrades: Object.fromEntries(this.playerUpgrades),
-    });
+    // Show selection UI locally (for host, unless host is the winner)
+    if (this.localPlayerId !== winnerId) {
+      this.events.emit('show-powerup-selection', {
+        currentUpgrades: Object.fromEntries(this.playerUpgrades),
+      });
+    } else {
+      // Winner sees a waiting screen instead
+      this.events.emit('winner-skip-upgrade');
+    }
 
-    // Tell clients to show their selection UI
+    // Tell clients to show their selection UI (or skip if they're the winner)
     if (!this.testMode) {
-      network.broadcastToClients({ type: 'show-upgrades' });
+      network.broadcastToClients({ type: 'show-upgrades', winnerId });
+    }
+
+    // If no one needs to pick (e.g. test mode with winner as only human), skip
+    if (this._upgradesPending.size === 0) {
+      this._checkAllUpgradesPicked();
+      return;
     }
 
     // Start the 30s auto-pick timer

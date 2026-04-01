@@ -142,15 +142,38 @@ export class Arena {
       wizard.x = this.centerX + nx * maxDist;
       wizard.y = this.centerY + ny * maxDist;
 
-      // Kill knockback velocity along the wall normal (absorb the impact)
+      // Convert knockback into tangential velocity (spin along wall)
       const dot = wizard.knockbackVel.x * nx + wizard.knockbackVel.y * ny;
       if (dot > 0) {
+        // Remove the radial component (into the wall)
         wizard.knockbackVel.x -= dot * nx;
         wizard.knockbackVel.y -= dot * ny;
+
+        // Boost the remaining tangential velocity to preserve energy
+        const tangentSpeed = Math.sqrt(wizard.knockbackVel.x ** 2 + wizard.knockbackVel.y ** 2);
+        const totalSpeed = Math.sqrt(tangentSpeed ** 2 + dot ** 2);
+        if (tangentSpeed > 0.1) {
+          const scale = totalSpeed / tangentSpeed * 0.85; // 85% energy preserved as spin
+          wizard.knockbackVel.x *= scale;
+          wizard.knockbackVel.y *= scale;
+        } else {
+          // No tangential component — push perpendicular (clockwise)
+          wizard.knockbackVel.x = -ny * dot * 0.85;
+          wizard.knockbackVel.y = nx * dot * 0.85;
+        }
       }
       return true;
     }
     return false;
+  }
+
+  /**
+   * Check if a position is outside the outer wall.
+   */
+  isOutsideWall(x, y) {
+    const dx = x - this.centerX;
+    const dy = y - this.centerY;
+    return Math.sqrt(dx * dx + dy * dy) > this.wallRadius;
   }
 
   serialize() {

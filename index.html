@@ -65,7 +65,7 @@
       color: #666;
       letter-spacing: normal;
     }
-    .lobby-panel button {
+    .lobby-panel button:not(.mode-btn) {
       background: #e94560;
       color: white;
       border: none;
@@ -76,10 +76,30 @@
       margin: 6px;
       transition: background 0.2s;
     }
-    .lobby-panel button:hover { background: #c73652; }
-    .lobby-panel button:disabled {
+    .lobby-panel button:not(.mode-btn):hover { background: #c73652; }
+    .lobby-panel button:not(.mode-btn):disabled {
       background: #555;
       cursor: not-allowed;
+    }
+    /* Mode toggle buttons */
+    .mode-btn {
+      padding: 10px 20px;
+      font-size: 0.9em;
+      min-width: 120px;
+      cursor: pointer;
+      border: 2px solid #e94560;
+      transition: background 0.2s, color 0.2s;
+      margin: 0;
+    }
+    .mode-btn:hover {
+      filter: brightness(1.15);
+    }
+    #btn-mode-roguelike {
+      border-radius: 6px 0 0 6px;
+    }
+    #btn-mode-arena {
+      border-radius: 0 6px 6px 0;
+      border-left: none;
     }
     #lobby-status {
       margin-top: 16px;
@@ -132,6 +152,15 @@
       <div class="lobby-section">
         <input type="text" id="name-input" placeholder="Enter your wizard name" maxlength="16" />
       </div>
+
+      <!-- Mode selection -->
+      <div id="mode-selector" style="margin:0 0 12px 0; display:flex; gap:0; justify-content:center;">
+        <button id="btn-mode-roguelike" class="mode-btn" style="background:#e94560; color:#fff;">Roguelike</button>
+        <button id="btn-mode-arena" class="mode-btn" style="background:transparent; color:#e94560;">Arena</button>
+      </div>
+      <p id="mode-description" style="color:#666; font-size:0.8em; margin-bottom:16px; min-height:2.4em; line-height:1.2em;">
+        Earn upgrades between rounds — losers choose a powerup
+      </p>
 
       <!-- Initial buttons -->
       <div id="lobby-menu">

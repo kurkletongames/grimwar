@@ -10,6 +10,12 @@ import {
   BASE_FIREBALL_DAMAGE,
   BASE_FIREBALL_KNOCKBACK,
 } from '../entities/Fireball.js';
+import { IceShard } from '../entities/IceShard.js';
+import { LightningBolt } from '../entities/LightningBolt.js';
+import { Meteor } from '../entities/Meteor.js';
+import { GravitySphere } from '../entities/GravitySphere.js';
+import { SPELL_DEFS, GLOBAL_UPGRADES, SPELL_IDS, MAX_SPELL_SLOTS, createBaseSpellStats, createBaseGlobalUpgrades } from '../data/SpellDefinitions.js';
+import { GoldManager } from '../systems/GoldManager.js';
 
 const TICK_RATE = 1000 / 30; // 30 ticks per second for smoother sync
 const ROUND_END_DELAY = 2000; // ms before showing power-up screen
@@ -196,6 +202,11 @@ export class GameScene extends Phaser.Scene {
     this.botIds = [];
     this.botLastFireball = {};
 
+    // Game mode: 'roguelike' or 'arena'
+    this.gameMode = 'roguelike';
+    this.draftRound = 0;
+    this.draftTotal = 3; // number of draft picks in arena mode
+
     // Round & score tracking
     this.roundNumber = 0;
     this.scores = new Map(); // playerId -> round wins
@@ -207,9 +218,15 @@ export class GameScene extends Phaser.Scene {
     this._blinkFxList = []; // track VFX graphics for cleanup
     this.winsToWin = DEFAULT_WINS_TO_WIN;
 
-    // Per-player fireball upgrades: { speed, damage, knockback }
+    // Per-player fireball upgrades (roguelike mode): { speed, damage, knockback }
     this.playerUpgrades = new Map();
     this.playerUpgradeHistory = new Map(); // playerId -> [upgradeId, ...]
+
+    // Arena mode: per-player spell data
+    this.playerSpellData = new Map(); // playerId -> { spells, activeSlot, spellUpgrades, globalUpgrades }
+    this.goldManager = new GoldManager();
+    this.spellCastTimes = new Map(); // 'playerId-spellId' -> last cast timestamp
+    this.shopOpen = false;
 
     // Input — disable capture so HTML inputs (lobby name) still work
     this.keys = this.input.keyboard.addKeys({
@@ -229,6 +246,12 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-SPACE', () => {
       this._handleBlink();
     });
+
+    // Spell slot switching (arena mode, 1-4 keys)
+    this.input.keyboard.on('keydown-ONE', () => this._switchSpell(0));
+    this.input.keyboard.on('keydown-TWO', () => this._switchSpell(1));
+    this.input.keyboard.on('keydown-THREE', () => this._switchSpell(2));
+    this.input.keyboard.on('keydown-FOUR', () => this._switchSpell(3));
 
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -257,6 +280,30 @@ export class GameScene extends Phaser.Scene {
       this._startRound();
     };
 
+    // Shop messages (arena mode, client side)
+    network.onShowShop = (data) => {
+      this.shopOpen = true;
+      if (data.gold) this.goldManager.applyState(data.gold);
+      if (data.playerSpellData) this._applyAllSpellData(data.playerSpellData);
+      this.events.emit('show-shop', data);
+    };
+    network.onShopClosed = () => {
+      this.shopOpen = false;
+      this.events.emit('shop-closed');
+    };
+    network.onShopUpdate = (data) => {
+      if (data.gold) this.goldManager.applyState(data.gold);
+      if (data.playerSpellData) this._applyAllSpellData(data.playerSpellData);
+      this.events.emit('shop-update', data);
+    };
+
+    // Host: handle player reconnection
+    network.onPlayerReconnected = (peerId, name) => {
+      if (!network.isHost) return;
+      // Send them the current game state immediately so they sync up
+      this._broadcastGameState();
+    };
+
     // Cleanup on scene shutdown
     this.events.on('shutdown', () => {
       this._cancelPendingTimers();
@@ -265,18 +312,95 @@ export class GameScene extends Phaser.Scene {
       network.onShowUpgrades = null;
       network.onUpgradeStatus = null;
       network.onStartRound = null;
+      network.onShowShop = null;
+      network.onShopClosed = null;
+      network.onShopUpdate = null;
+      network.onPlayerReconnected = null;
     });
   }
 
   _startGame(data) {
+    // Reconnecting client — just restore local ID, game state will sync via onGameState
+    if (data.reconnect) {
+      this.gameStarted = true;
+      this.localPlayerId = network.localPlayerId;
+      this.gameMode = data.gameMode || 'roguelike';
+      this.playerInfo = data.players;
+
+      // Init any missing player data structures (won't overwrite existing)
+      data.players.forEach((p) => {
+        if (!this.scores.has(p.peerId)) this.scores.set(p.peerId, 0);
+        if (!this.playerUpgradeHistory.has(p.peerId)) this.playerUpgradeHistory.set(p.peerId, []);
+        if (!this.playerUpgrades.has(p.peerId)) {
+          this.playerUpgrades.set(p.peerId, {
+            speed: BASE_FIREBALL_SPEED,
+            damage: BASE_FIREBALL_DAMAGE,
+            knockback: BASE_FIREBALL_KNOCKBACK,
+            multishot: 1,
+            piercing: false,
+            cooldownReduction: 0,
+            radius: 8,
+            blinkKnockback: 0,
+            blinkDistance: BLINK_DISTANCE,
+            lifesteal: 0,
+            bonusHp: 0,
+            selfKnockback: 0,
+          });
+        }
+      });
+
+      // Arena mode: init missing spell data and gold for reconnecting player
+      if (this.gameMode === 'arena') {
+        data.players.forEach((p) => {
+          if (!this.playerSpellData.has(p.peerId)) {
+            this.playerSpellData.set(p.peerId, {
+              spells: ['fireball'],
+              activeSlot: 0,
+              spellUpgrades: { fireball: createBaseSpellStats('fireball') },
+              globalUpgrades: createBaseGlobalUpgrades(),
+              purchasedUpgrades: [],
+            });
+          }
+        });
+        if (!this.goldManager.gold.has(this.localPlayerId)) {
+          this.goldManager.gold.set(this.localPlayerId, 0);
+        }
+      }
+
+      // Launch UIScene for the reconnected client
+      this.scene.launch('UIScene');
+
+      const emitReconnect = () => {
+        this.events.emit('game-started', {
+          players: data.players,
+          scores: Object.fromEntries(this.scores),
+          winsToWin: this.winsToWin,
+          gameMode: this.gameMode,
+        });
+      };
+
+      const uiScene = this.scene.get('UIScene');
+      if (uiScene.scene.isActive()) {
+        emitReconnect();
+      } else {
+        uiScene.events.once('create', emitReconnect);
+      }
+      return;
+    }
+
     this.gameStarted = true;
     this.localPlayerId = network.localPlayerId;
     this.testMode = data.testMode || false;
+    this.gameMode = data.gameMode || 'roguelike';
     this.playerInfo = data.players;
     this.botIds = [];
     this.botLastFireball = {};
+    this.draftRound = 0;
 
     // Init scores, upgrades, and history
+    const playerIds = data.players.map((p) => p.peerId);
+    this.goldManager.init(playerIds);
+
     data.players.forEach((p) => {
       this.scores.set(p.peerId, 0);
       this.playerUpgradeHistory.set(p.peerId, []);
@@ -294,6 +418,16 @@ export class GameScene extends Phaser.Scene {
         bonusHp: 0,
         selfKnockback: 0,
       });
+
+      // Arena mode spell data
+      this.playerSpellData.set(p.peerId, {
+        spells: ['fireball'],
+        activeSlot: 0,
+        spellUpgrades: { fireball: createBaseSpellStats('fireball') },
+        globalUpgrades: createBaseGlobalUpgrades(),
+        purchasedUpgrades: [], // track upgrade IDs bought
+      });
+
       if (p.peerId.startsWith('bot-')) {
         this.botIds.push(p.peerId);
         this.botLastFireball[p.peerId] = 0;
@@ -309,8 +443,15 @@ export class GameScene extends Phaser.Scene {
         players: data.players,
         scores: Object.fromEntries(this.scores),
         winsToWin: this.winsToWin,
+        gameMode: this.gameMode,
       });
-      this._startRound();
+
+      if (this.gameMode === 'arena') {
+        // Arena mode: start first round directly (shop opens between rounds)
+        this._startRound();
+      } else {
+        this._startRound();
+      }
     };
 
     // UIScene.create() is async on first launch — check if already active
@@ -320,6 +461,188 @@ export class GameScene extends Phaser.Scene {
     } else {
       uiScene.events.once('create', emitAndStart);
     }
+  }
+
+  // ---- Arena Shop Phase ----
+
+  _startShopPhase(winnerId) {
+    this.shopOpen = true;
+
+    // Award gold
+    this.goldManager.awardRoundGold(winnerId);
+
+    // Bots auto-buy in test mode
+    if (this.testMode) {
+      for (const botId of this.botIds) {
+        this._botShopBuy(botId);
+      }
+    }
+
+    // Emit shop event locally
+    this.events.emit('show-shop', {
+      gold: this.goldManager.serialize(),
+      playerSpellData: this._serializeAllSpellData(),
+    });
+
+    // Tell clients to open shop
+    if (!this.testMode) {
+      network.broadcastToClients({
+        type: 'show-shop',
+        gold: this.goldManager.serialize(),
+        playerSpellData: this._serializeAllSpellData(),
+      });
+    }
+
+    // 30s shop timer
+    this._shopTimer = this.time.delayedCall(30000, () => {
+      this._closeShop();
+    });
+    this._pendingTimers.push(this._shopTimer);
+  }
+
+  _closeShop() {
+    this.shopOpen = false;
+    if (this._shopTimer) {
+      this._shopTimer.remove(false);
+      this._shopTimer = null;
+    }
+
+    this.events.emit('shop-closed');
+    if (!this.testMode) {
+      network.broadcastToClients({ type: 'shop-closed' });
+    }
+
+    // Start next round
+    this._pendingTimers.push(
+      this.time.delayedCall(500, () => {
+        this._startRound();
+        if (!this.testMode) {
+          network.broadcastToClients({ type: 'game-start-round' });
+        }
+      })
+    );
+  }
+
+  _handleShopBuySpell(peerId, spellId) {
+    const def = SPELL_DEFS[spellId];
+    if (!def) return;
+    const data = this.playerSpellData.get(peerId);
+    if (!data) return;
+
+    // Already own it or slots full
+    if (data.spells.includes(spellId)) return;
+    if (data.spells.length >= MAX_SPELL_SLOTS) return;
+
+    // Check gold
+    if (!this.goldManager.spend(peerId, def.shopPrice)) return;
+
+    // Add spell
+    data.spells.push(spellId);
+    data.spellUpgrades[spellId] = createBaseSpellStats(spellId);
+
+    // Sync to all
+    this._broadcastShopState();
+  }
+
+  _handleShopBuyUpgrade(peerId, upgradeId) {
+    const data = this.playerSpellData.get(peerId);
+    if (!data) return;
+
+    // Check spell upgrades
+    for (const sid of data.spells) {
+      const spellDef = SPELL_DEFS[sid];
+      if (!spellDef) continue;
+      const upg = spellDef.upgrades.find((u) => u.id === upgradeId);
+      if (upg) {
+        // Check max stacks
+        if (upg.maxStacks) {
+          const count = data.purchasedUpgrades.filter((id) => id === upgradeId).length;
+          if (count >= upg.maxStacks) return;
+        }
+        if (!this.goldManager.spend(peerId, upg.price)) return;
+        upg.apply(data.spellUpgrades[sid]);
+        data.purchasedUpgrades.push(upgradeId);
+        this._broadcastShopState();
+        return;
+      }
+    }
+
+    // Check global upgrades
+    const globalUpg = GLOBAL_UPGRADES.find((u) => u.id === upgradeId);
+    if (globalUpg) {
+      if (globalUpg.maxStacks) {
+        const count = data.purchasedUpgrades.filter((id) => id === upgradeId).length;
+        if (count >= globalUpg.maxStacks) return;
+      }
+      if (!this.goldManager.spend(peerId, globalUpg.price)) return;
+      globalUpg.apply(data.globalUpgrades);
+      data.purchasedUpgrades.push(upgradeId);
+      this._broadcastShopState();
+    }
+  }
+
+  // Host processes local shop purchases
+  submitShopBuySpell(spellId) {
+    this._handleShopBuySpell(this.localPlayerId, spellId);
+  }
+
+  submitShopBuyUpgrade(upgradeId) {
+    this._handleShopBuyUpgrade(this.localPlayerId, upgradeId);
+  }
+
+  // Send shop purchase to host (client)
+  sendShopBuySpell(spellId) {
+    network.sendInput({ type: 'input', action: 'shop-buy-spell', spellId });
+  }
+
+  sendShopBuyUpgrade(upgradeId) {
+    network.sendInput({ type: 'input', action: 'shop-buy-upgrade', upgradeId });
+  }
+
+  _broadcastShopState() {
+    const state = {
+      type: 'shop-update',
+      gold: this.goldManager.serialize(),
+      playerSpellData: this._serializeAllSpellData(),
+    };
+    if (!this.testMode) {
+      network.broadcastToClients(state);
+    }
+    this.events.emit('shop-update', state);
+  }
+
+  _serializeAllSpellData() {
+    const result = {};
+    this.playerSpellData.forEach((data, pid) => {
+      result[pid] = {
+        spells: [...data.spells],
+        activeSlot: data.activeSlot,
+        spellUpgrades: JSON.parse(JSON.stringify(data.spellUpgrades)),
+        globalUpgrades: { ...data.globalUpgrades },
+        purchasedUpgrades: [...data.purchasedUpgrades],
+      };
+    });
+    return result;
+  }
+
+  _applyAllSpellData(data) {
+    for (const [pid, spellData] of Object.entries(data)) {
+      this.playerSpellData.set(pid, {
+        spells: [...spellData.spells],
+        activeSlot: spellData.activeSlot,
+        spellUpgrades: JSON.parse(JSON.stringify(spellData.spellUpgrades)),
+        globalUpgrades: { ...spellData.globalUpgrades },
+        purchasedUpgrades: [...(spellData.purchasedUpgrades || [])],
+      });
+    }
+  }
+
+  getPlayerSpellData() {
+    return this._serializeAllSpellData();
+  }
+
+  getGold() {
+    return this.goldManager.serialize();
   }
 
   _cancelPendingTimers() {
@@ -341,6 +664,8 @@ export class GameScene extends Phaser.Scene {
     // Reset per-player cooldown tracking
     this.playerFireballTimes.clear();
     this.playerBlinkTimes.clear();
+    this.spellCastTimes.clear();
+    this.shopOpen = false;
     this.botIds.forEach((botId) => { this.botLastFireball[botId] = 0; });
 
     // Destroy lingering tween graphics
@@ -369,9 +694,16 @@ export class GameScene extends Phaser.Scene {
       const x = cx + Math.cos(angle) * spawnRadius;
       const y = cy + Math.sin(angle) * spawnRadius;
       const wizard = new Wizard(this, x, y, player.peerId, player.name, index);
-      const upgrades = this.playerUpgrades.get(player.peerId);
-      if (upgrades && upgrades.bonusHp > 0) {
-        wizard.maxHealth += upgrades.bonusHp;
+      let bonusHp = 0;
+      if (this.gameMode === 'arena') {
+        const spellData = this.playerSpellData.get(player.peerId);
+        bonusHp = spellData ? spellData.globalUpgrades.bonusHp || 0 : 0;
+      } else {
+        const upgrades = this.playerUpgrades.get(player.peerId);
+        bonusHp = upgrades ? upgrades.bonusHp || 0 : 0;
+      }
+      if (bonusHp > 0) {
+        wizard.maxHealth += bonusHp;
         wizard.health = wizard.maxHealth;
       }
       this.wizards.set(player.peerId, wizard);
@@ -397,12 +729,117 @@ export class GameScene extends Phaser.Scene {
     return Math.max(500, FIREBALL_COOLDOWN - reduction); // min 0.5s
   }
 
+  // ---- Arena mode spell helpers ----
+
+  _getActiveSpellId(playerId) {
+    const data = this.playerSpellData.get(playerId);
+    if (!data) return 'fireball';
+    return data.spells[data.activeSlot] || 'fireball';
+  }
+
+  _getSpellCooldown(playerId, spellId) {
+    if (this.gameMode !== 'arena') {
+      return this._getFireballCooldown(playerId);
+    }
+    const data = this.playerSpellData.get(playerId);
+    if (!data) return 2500;
+    const spellStats = data.spellUpgrades[spellId];
+    const def = SPELL_DEFS[spellId];
+    if (!def) return 2500;
+    const reduction = spellStats ? spellStats.cooldownReduction || 0 : 0;
+    return Math.max(400, def.baseCooldown - reduction);
+  }
+
+  _getSpellCastTimeKey(playerId, spellId) {
+    return `${playerId}-${spellId}`;
+  }
+
+  _switchSpell(slotIndex) {
+    if (this.gameMode !== 'arena') return;
+    const data = this.playerSpellData.get(this.localPlayerId);
+    if (!data || slotIndex >= data.spells.length) return;
+    data.activeSlot = slotIndex;
+    const spellId = data.spells[slotIndex];
+    const def = SPELL_DEFS[spellId];
+    this.events.emit('spell-switched', {
+      activeSlot: slotIndex,
+      spellId,
+      spells: data.spells,
+    });
+  }
+
+  _getStatsForSpell(playerId, spellId) {
+    if (this.gameMode !== 'arena') {
+      return this.playerUpgrades.get(playerId) || {};
+    }
+    const data = this.playerSpellData.get(playerId);
+    if (!data || !data.spellUpgrades[spellId]) {
+      return createBaseSpellStats(spellId) || {};
+    }
+    return data.spellUpgrades[spellId];
+  }
+
+  _spawnProjectile(playerId, spellId, x, y, dirX, dirY) {
+    const stats = this._getStatsForSpell(playerId, spellId);
+    const count = stats.multishot || 1;
+
+    const spawnOne = (fdx, fdy) => {
+      switch (spellId) {
+        case 'ice_shard':
+          return new IceShard(this, x, y, fdx, fdy, playerId, stats);
+        case 'lightning_bolt':
+          return new LightningBolt(this, x, y, fdx, fdy, playerId, stats);
+        case 'meteor':
+          return new Meteor(this, x, y, fdx, fdy, playerId, stats);
+        case 'gravity_sphere':
+          return new GravitySphere(this, x, y, fdx, fdy, playerId, stats);
+        case 'fireball':
+        default:
+          return new Fireball(this, x, y, fdx, fdy, playerId, stats);
+      }
+    };
+
+    if (count <= 1) {
+      this.fireballs.push(spawnOne(dirX, dirY));
+    } else {
+      const baseAngle = Math.atan2(dirY, dirX);
+      const spreadAngle = Math.PI / 6;
+      for (let i = 0; i < count; i++) {
+        const offset = -spreadAngle / 2 + (spreadAngle / (count - 1)) * i;
+        const angle = baseAngle + offset;
+        this.fireballs.push(spawnOne(Math.cos(angle), Math.sin(angle)));
+      }
+    }
+
+    const castKey = this._getSpellCastTimeKey(playerId, spellId);
+    this.spellCastTimes.set(castKey, Date.now());
+    this.playerFireballTimes.set(playerId, Date.now());
+
+    // Self-knockback (Glass Cannon in roguelike, or if stats have it)
+    if (stats.selfKnockback > 0) {
+      const wizard = this.wizards.get(playerId);
+      if (wizard) {
+        const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+        wizard.applyKnockback(
+          -(dirX / len) * stats.selfKnockback,
+          -(dirY / len) * stats.selfKnockback,
+        );
+      }
+    }
+  }
+
   _handleLeftClick(pointer) {
     if (!this.gameStarted || this.roundOver || this.countdownActive) return;
+    if (this.shopOpen) return;
 
     const now = Date.now();
-    const cd = this._getFireballCooldown(this.localPlayerId);
-    if (now - this.lastFireballTime < cd) return;
+    const spellId = this.gameMode === 'arena'
+      ? this._getActiveSpellId(this.localPlayerId)
+      : 'fireball';
+    const cd = this._getSpellCooldown(this.localPlayerId, spellId);
+    const castKey = this._getSpellCastTimeKey(this.localPlayerId, spellId);
+    const lastCast = this.spellCastTimes.get(castKey) || 0;
+    if (now - lastCast < cd) return;
 
     const wizard = this.wizards.get(this.localPlayerId);
     if (!wizard || !wizard.alive) return;
@@ -412,14 +849,19 @@ export class GameScene extends Phaser.Scene {
     const dirY = worldPoint.y - wizard.y;
 
     if (network.isHost) {
-      this._spawnFireball(this.localPlayerId, wizard.x, wizard.y, dirX, dirY);
-      this.lastFireballTime = now;
-      this.events.emit('fireball-cast', now);
+      if (this.gameMode === 'arena') {
+        this._spawnProjectile(this.localPlayerId, spellId, wizard.x, wizard.y, dirX, dirY);
+      } else {
+        this._spawnFireball(this.localPlayerId, wizard.x, wizard.y, dirX, dirY);
+      }
     } else {
-      network.sendInput({ type: 'input', action: 'fireball', dirX, dirY });
-      this.lastFireballTime = now;
-      this.events.emit('fireball-cast', now);
+      network.sendInput({ type: 'input', action: 'cast', spellId, dirX, dirY });
     }
+
+    // Update all cooldown trackers
+    this.spellCastTimes.set(castKey, now);
+    this.lastFireballTime = now;
+    this.events.emit('fireball-cast', now);
   }
 
   _spawnFireball(playerId, x, y, dirX, dirY) {
@@ -489,9 +931,17 @@ export class GameScene extends Phaser.Scene {
     const wizard = this.wizards.get(playerId);
     if (!wizard || !wizard.alive) return;
 
-    const upgrades = this.playerUpgrades.get(playerId) || {};
-    const blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
-    const blinkKB = upgrades.blinkKnockback || 0;
+    let blinkDist, blinkKB;
+    if (this.gameMode === 'arena') {
+      const spellData = this.playerSpellData.get(playerId);
+      const globals = spellData ? spellData.globalUpgrades : {};
+      blinkDist = globals.blinkDistance || BLINK_DISTANCE;
+      blinkKB = globals.blinkKnockback || 0;
+    } else {
+      const upgrades = this.playerUpgrades.get(playerId) || {};
+      blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+      blinkKB = upgrades.blinkKnockback || 0;
+    }
 
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
     const nx = dirX / len;
@@ -555,8 +1005,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   _executeLocalBlink(wizard, dirX, dirY) {
-    const upgrades = this.playerUpgrades.get(wizard.playerId) || {};
-    const blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+    let blinkDist;
+    if (this.gameMode === 'arena') {
+      const spellData = this.playerSpellData.get(wizard.playerId);
+      const globals = spellData ? spellData.globalUpgrades : {};
+      blinkDist = globals.blinkDistance || BLINK_DISTANCE;
+    } else {
+      const upgrades = this.playerUpgrades.get(wizard.playerId) || {};
+      blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+    }
 
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
     const nx = dirX / len;
@@ -591,11 +1048,21 @@ export class GameScene extends Phaser.Scene {
   _handleRemoteInput(peerId, data) {
     if (!network.isHost) return;
 
-    // Upgrade selection — handle before wizard alive check (wizards don't exist between rounds)
+    // Upgrade selection — handle before wizard alive check
     if (data.action === 'upgrade') {
       if (typeof data.upgradeId === 'string') {
         this._receiveUpgradeChoice(peerId, data.upgradeId);
       }
+      return;
+    }
+
+    // Shop purchases (arena mode) — also before wizard check
+    if (data.action === 'shop-buy-spell') {
+      this._handleShopBuySpell(peerId, data.spellId);
+      return;
+    }
+    if (data.action === 'shop-buy-upgrade') {
+      this._handleShopBuyUpgrade(peerId, data.upgradeId);
       return;
     }
 
@@ -611,8 +1078,18 @@ export class GameScene extends Phaser.Scene {
         if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
         this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
         break;
+      case 'cast': {
+        // Arena mode spell cast
+        if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
+        const spellId = data.spellId || 'fireball';
+        if (this.gameMode === 'arena') {
+          this._spawnProjectile(peerId, spellId, wizard.x, wizard.y, data.dirX, data.dirY);
+        } else {
+          this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
+        }
+        break;
+      }
       case 'blink': {
-        // Client sends target position; compute direction from host's authoritative wizard position
         if (!this._isFiniteNum(data.targetX) || !this._isFiniteNum(data.targetY)) return;
         const blinkDirX = data.targetX - wizard.x;
         const blinkDirY = data.targetY - wizard.y;
@@ -684,6 +1161,41 @@ export class GameScene extends Phaser.Scene {
     this.arena.update(delta);
   }
 
+  _botShopBuy(botId) {
+    const data = this.playerSpellData.get(botId);
+    if (!data) return;
+    const gold = this.goldManager.getGold(botId);
+
+    // Try to buy a random spell if can afford and has slots
+    if (data.spells.length < MAX_SPELL_SLOTS) {
+      const buyable = SPELL_IDS.filter((id) => !data.spells.includes(id) && SPELL_DEFS[id].shopPrice <= gold);
+      if (buyable.length > 0) {
+        const pick = buyable[Math.floor(Math.random() * buyable.length)];
+        this._handleShopBuySpell(botId, pick);
+        return;
+      }
+    }
+
+    // Try to buy a random upgrade for an owned spell
+    const allUpgrades = [];
+    for (const sid of data.spells) {
+      const def = SPELL_DEFS[sid];
+      if (!def) continue;
+      for (const upg of def.upgrades) {
+        if (upg.price <= this.goldManager.getGold(botId)) {
+          const count = data.purchasedUpgrades.filter((id) => id === upg.id).length;
+          if (!upg.maxStacks || count < upg.maxStacks) {
+            allUpgrades.push(upg.id);
+          }
+        }
+      }
+    }
+    if (allUpgrades.length > 0) {
+      const pick = allUpgrades[Math.floor(Math.random() * allUpgrades.length)];
+      this._handleShopBuyUpgrade(botId, pick);
+    }
+  }
+
   _updateBots() {
     const now = Date.now();
     for (const botId of this.botIds) {
@@ -721,9 +1233,19 @@ export class GameScene extends Phaser.Scene {
         bot.setInput(-dy / len * 0.5, dx / len * 0.5);
       }
 
-      if (now - (this.botLastFireball[botId] || 0) > FIREBALL_COOLDOWN + 200 + Math.random() * 800) {
-        this._spawnFireball(botId, bot.x, bot.y, dx, dy);
-        this.botLastFireball[botId] = now;
+      if (this.gameMode === 'arena') {
+        const spellId = this._getActiveSpellId(botId);
+        const cd = this._getSpellCooldown(botId, spellId);
+        const castKey = this._getSpellCastTimeKey(botId, spellId);
+        const lastCast = this.spellCastTimes.get(castKey) || 0;
+        if (now - lastCast > cd + 200 + Math.random() * 800) {
+          this._spawnProjectile(botId, spellId, bot.x, bot.y, dx, dy);
+        }
+      } else {
+        if (now - (this.botLastFireball[botId] || 0) > FIREBALL_COOLDOWN + 200 + Math.random() * 800) {
+          this._spawnFireball(botId, bot.x, bot.y, dx, dy);
+          this.botLastFireball[botId] = now;
+        }
       }
     }
   }
@@ -790,15 +1312,28 @@ export class GameScene extends Phaser.Scene {
       if (wizard.alive) this.arena.constrainToWall(wizard);
 
       // Update cooldown visuals for all wizards
-      const lastFb = this.playerFireballTimes.get(wizard.playerId) || 0;
-      const fbElapsed = now - lastFb;
-      const playerCd = this._getFireballCooldown(wizard.playerId);
-      const fbPct = lastFb === 0 ? 0 : Math.max(0, 1 - fbElapsed / playerCd);
+      let fbPct, ringColor;
+      if (this.gameMode === 'arena') {
+        const activeSpell = this._getActiveSpellId(wizard.playerId);
+        const castKey = this._getSpellCastTimeKey(wizard.playerId, activeSpell);
+        const lastCast = this.spellCastTimes.get(castKey) || 0;
+        const spellCd = this._getSpellCooldown(wizard.playerId, activeSpell);
+        const elapsed = now - lastCast;
+        fbPct = lastCast === 0 ? 0 : Math.max(0, 1 - elapsed / spellCd);
+        ringColor = SPELL_DEFS[activeSpell]?.color || 0xff6600;
+      } else {
+        const lastFb = this.playerFireballTimes.get(wizard.playerId) || 0;
+        const fbElapsed = now - lastFb;
+        const playerCd = this._getFireballCooldown(wizard.playerId);
+        fbPct = lastFb === 0 ? 0 : Math.max(0, 1 - fbElapsed / playerCd);
+        ringColor = 0xff6600;
+      }
 
       const lastBlink = this.playerBlinkTimes.get(wizard.playerId) || 0;
       const blinkElapsed = now - lastBlink;
       const blinkReady = lastBlink === 0 || blinkElapsed >= BLINK_COOLDOWN;
 
+      wizard.cooldownRingColor = ringColor;
       wizard.setCooldowns(fbPct, blinkReady);
     });
 
@@ -807,9 +1342,26 @@ export class GameScene extends Phaser.Scene {
 
     this.fireballs.forEach((fb) => {
       fb.update(delta);
+
+      // GravitySphere: apply pull during well phase
+      if (fb.spellId === 'gravity_sphere' && fb.phase === 'well' && fb.alive) {
+        fb.applyPull(this.wizards, delta);
+      }
+
       this.wizards.forEach((wizard) => {
         const dealt = fb.checkHit(wizard);
-        if (dealt > 0 && fb.lifesteal > 0) {
+        if (dealt === -1 && fb.spellId === 'meteor') {
+          // Meteor triggered explosion — apply AoE damage
+          const hits = fb.applyExplosionDamage(this.wizards);
+          hits.forEach(({ wizard: w, dealt: d }) => {
+            if (d > 0 && fb.lifesteal > 0) {
+              const owner = this.wizards.get(fb.ownerPlayerId);
+              if (owner && owner.alive) {
+                owner.health = Math.min(owner.maxHealth, owner.health + d * fb.lifesteal);
+              }
+            }
+          });
+        } else if (dealt > 0 && fb.lifesteal > 0) {
           const owner = this.wizards.get(fb.ownerPlayerId);
           if (owner && owner.alive) {
             owner.health = Math.min(owner.maxHealth, owner.health + dealt * fb.lifesteal);
@@ -892,6 +1444,13 @@ export class GameScene extends Phaser.Scene {
               scores: Object.fromEntries(this.scores),
               winsToWin: this.winsToWin,
             });
+          } else if (this.gameMode === 'arena') {
+            // Arena mode: open shop between rounds
+            this._pendingTimers.push(
+              this.time.delayedCall(ROUND_END_DELAY, () => {
+                this._startShopPhase(this._roundWinnerId);
+              })
+            );
           } else {
             this._pendingTimers.push(
               this.time.delayedCall(ROUND_END_DELAY, () => {
@@ -975,7 +1534,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   _checkAllUpgradesPicked() {
-    if (!this._upgradesPending || this._upgradesPending.size > 0) {
+    if (!this._upgradesPending) return;
+    if (this._upgradesPending.size > 0) {
       // Broadcast waiting status to clients
       if (!this.testMode) {
         network.broadcastToClients({
@@ -1046,7 +1606,11 @@ export class GameScene extends Phaser.Scene {
   extendGame() {
     this.winsToWin += 2;
     this.events.emit('game-extended', { winsToWin: this.winsToWin });
-    this._showPowerUpSelection();
+    if (this.gameMode === 'arena') {
+      this._startShopPhase(this._roundWinnerId);
+    } else {
+      this._showPowerUpSelection();
+    }
   }
 
   getScores() {
@@ -1055,6 +1619,46 @@ export class GameScene extends Phaser.Scene {
 
   getPlayerInfo() {
     return this.playerInfo;
+  }
+
+  _createProjectileFromState(fbs) {
+    const spellId = fbs.spellId || 'fireball';
+    switch (spellId) {
+      case 'ice_shard': {
+        const p = new IceShard(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        return p;
+      }
+      case 'lightning_bolt': {
+        const p = new LightningBolt(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        return p;
+      }
+      case 'meteor': {
+        const p = new Meteor(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        if (fbs.exploded) { p.exploded = true; p.explosionTime = Date.now(); }
+        if (fbs.hitTargets) { p.hitTargets = new Set(fbs.hitTargets); }
+        return p;
+      }
+      case 'gravity_sphere': {
+        const p = new GravitySphere(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        if (fbs.phase === 'well') { p.phase = 'well'; p.wellStartTime = fbs.wellStartTime; p.velX = 0; p.velY = 0; }
+        return p;
+      }
+      case 'fireball':
+      default: {
+        const p = new Fireball(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        return p;
+      }
+    }
   }
 
   _broadcastGameState() {
@@ -1069,7 +1673,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   _applyGameState(data) {
-    if (network.isHost || this.roundOver) return;
+    if (network.isHost) return;
+
+    // Sync scores from host
+    if (data.scores) {
+      for (const [pid, score] of Object.entries(data.scores)) {
+        this.scores.set(pid, score);
+      }
+    }
+
+    if (this.roundOver) return;
 
     if (this.arena && data.arena) this.arena.applyState(data.arena);
 
@@ -1080,34 +1693,37 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    // Sync fireballs: match count and update positions instead of destroy/recreate
-    const serverFbs = (data.fireballs || []).filter((f) => f.alive);
-    // Remove excess local fireballs
+    // Sync projectiles: destroy all and recreate from server state
+    // (simpler and more correct than trying to match types/indices)
+    const serverFbs = (data.fireballs || []).filter((f) => f.alive || (f.spellId === 'meteor' && f.exploded));
+    // Remove excess local projectiles
     while (this.fireballs.length > serverFbs.length) {
       this.fireballs.pop().destroy();
     }
     // Update existing and create missing
     serverFbs.forEach((fbs, i) => {
-      if (i < this.fireballs.length) {
-        // Update existing fireball
+      if (i < this.fireballs.length && (this.fireballs[i].spellId || 'fireball') === (fbs.spellId || 'fireball')) {
+        // Update existing projectile of same type
         const fb = this.fireballs[i];
         fb.x = fbs.x;
         fb.y = fbs.y;
-        fb.velX = fbs.velX;
-        fb.velY = fbs.velY;
+        if (fbs.velX !== undefined) fb.velX = fbs.velX;
+        if (fbs.velY !== undefined) fb.velY = fbs.velY;
         fb.alive = fbs.alive;
+        if (fbs.phase !== undefined) fb.phase = fbs.phase;
+        if (fbs.exploded !== undefined) fb.exploded = fbs.exploded;
         fb.draw();
       } else {
-        // Create new fireball
-        const fb = new Fireball(this, fbs.x, fbs.y, fbs.velX, fbs.velY, fbs.ownerPlayerId, {
-          damage: fbs.damage,
-          knockback: fbs.knockback,
-          radius: fbs.radius,
-          piercing: fbs.piercing,
-        });
-        fb.velX = fbs.velX;
-        fb.velY = fbs.velY;
-        this.fireballs.push(fb);
+        // Type mismatch or new — destroy old and create correct type
+        if (i < this.fireballs.length) {
+          this.fireballs[i].destroy();
+        }
+        const fb = this._createProjectileFromState(fbs);
+        if (i < this.fireballs.length) {
+          this.fireballs[i] = fb;
+        } else {
+          this.fireballs.push(fb);
+        }
       }
     });
 

@@ -35,8 +35,12 @@ export class Wizard {
 
     // Cooldown visuals
     this.fireballCooldownPct = 0; // 0 = ready, 1 = just cast
+    this.cooldownRingColor = 0xff6600; // default fireball orange
     this.blinkReady = true;
     this.blinkGlowAlpha = 0; // for the pulse effect
+
+    // Slow effect (from Ice Shard)
+    this.slowEffect = null; // { factor: 0.5, endTime: timestamp }
 
     // Create wizard body (circle)
     this.graphics = scene.add.graphics();
@@ -80,6 +84,13 @@ export class Wizard {
 
     // Wizard body
     this.graphics.clear();
+
+    // Slow indicator — blue overlay behind wizard
+    if (this.slowEffect && Date.now() < this.slowEffect.endTime) {
+      this.graphics.fillStyle(0x88ddff, 0.25);
+      this.graphics.fillCircle(this.x, this.y, this.radius + 4);
+    }
+
     this.graphics.fillStyle(this.color, 1);
     this.graphics.fillCircle(this.x, this.y, this.radius);
 
@@ -129,7 +140,7 @@ export class Wizard {
 
         // Fill arc showing progress
         if (readyPct > 0) {
-          this.cooldownGraphics.lineStyle(2, 0xff6600, 0.7);
+          this.cooldownGraphics.lineStyle(2, this.cooldownRingColor, 0.7);
           this.cooldownGraphics.beginPath();
           const startAngle = -Math.PI / 2;
           const endAngle = startAngle + readyPct * Math.PI * 2;
@@ -180,6 +191,17 @@ export class Wizard {
     }
   }
 
+  applySlow(factor, durationMs) {
+    this.slowEffect = {
+      factor: Math.max(0.1, 1 - factor), // factor=0.5 means 50% speed
+      endTime: Date.now() + durationMs,
+    };
+  }
+
+  isSlowed() {
+    return this.slowEffect && Date.now() < this.slowEffect.endTime;
+  }
+
   update(delta) {
     if (!this.alive) {
       this.draw();
@@ -196,11 +218,17 @@ export class Wizard {
       if (this.blinkGlowAlpha < 0) this.blinkGlowAlpha = 0;
     }
 
-    // WASD movement
+    // Clear expired slow
+    if (this.slowEffect && Date.now() >= this.slowEffect.endTime) {
+      this.slowEffect = null;
+    }
+
+    // WASD movement (reduced by slow effect)
+    const speedMult = this.slowEffect ? this.slowEffect.factor : 1;
     if (this.inputDir.x !== 0 || this.inputDir.y !== 0) {
       const len = Math.sqrt(this.inputDir.x ** 2 + this.inputDir.y ** 2) || 1;
-      moveX = (this.inputDir.x / len) * WIZARD_SPEED * dt;
-      moveY = (this.inputDir.y / len) * WIZARD_SPEED * dt;
+      moveX = (this.inputDir.x / len) * WIZARD_SPEED * speedMult * dt;
+      moveY = (this.inputDir.y / len) * WIZARD_SPEED * speedMult * dt;
     }
 
     // Apply knockback

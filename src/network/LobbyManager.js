@@ -6,6 +6,7 @@ import { network } from './NetworkManager.js';
 export class LobbyManager {
   constructor(onGameStart) {
     this.onGameStart = onGameStart;
+    this.gameMode = 'roguelike'; // 'roguelike' or 'arena'
 
     // DOM elements
     this.lobby = document.getElementById('lobby');
@@ -32,6 +33,29 @@ export class LobbyManager {
     document.getElementById('btn-back').addEventListener('click', () => this._onBack());
     document.getElementById('btn-test').addEventListener('click', () => this._onTestMode());
     this.btnStart.addEventListener('click', () => this._onStart());
+
+    // Mode selection
+    const btnRoguelike = document.getElementById('btn-mode-roguelike');
+    const btnArena = document.getElementById('btn-mode-arena');
+    const modeDesc = document.getElementById('mode-description');
+
+    btnRoguelike.addEventListener('click', () => {
+      this.gameMode = 'roguelike';
+      btnRoguelike.style.background = '#e94560';
+      btnRoguelike.style.color = '#fff';
+      btnArena.style.background = 'transparent';
+      btnArena.style.color = '#e94560';
+      modeDesc.textContent = 'Earn upgrades between rounds — losers choose a powerup';
+    });
+
+    btnArena.addEventListener('click', () => {
+      this.gameMode = 'arena';
+      btnArena.style.background = '#e94560';
+      btnArena.style.color = '#fff';
+      btnRoguelike.style.background = 'transparent';
+      btnRoguelike.style.color = '#e94560';
+      modeDesc.textContent = 'Buy spells and upgrades from the shop between rounds';
+    });
 
     // Allow enter key in join code input
     this.joinCodeInput.addEventListener('keydown', (e) => {
@@ -110,7 +134,7 @@ export class LobbyManager {
 
     this.lobby.classList.add('hidden');
     if (this.onGameStart) {
-      this.onGameStart({ type: 'game-start', players, testMode: true });
+      this.onGameStart({ type: 'game-start', players, testMode: true, gameMode: this.gameMode });
     }
   }
 
@@ -121,7 +145,7 @@ export class LobbyManager {
   }
 
   _onStart() {
-    network.startGame();
+    network.startGame(this.gameMode);
   }
 
   _setupNetworkCallbacks() {

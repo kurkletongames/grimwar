@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { WIZARD_COLORS } from '../entities/Wizard.js';
 import { UPGRADES } from './GameScene.js';
 import { network } from '../network/NetworkManager.js';
+import { SPELL_DEFS, SPELL_IDS, GLOBAL_UPGRADES, MAX_SPELL_SLOTS } from '../data/SpellDefinitions.js';
 
 const RARITY_COLORS = {
   common:    0x888888,
@@ -41,6 +42,7 @@ export class UIScene extends Phaser.Scene {
     this.scores = {};
     this.playerInfo = [];
     this.winsToWin = 5;
+    this.gameMode = 'roguelike';
 
     // ---- Round text ----
     this.roundText = this.add.text(w / 2, 20, '', {
@@ -76,9 +78,27 @@ export class UIScene extends Phaser.Scene {
       this.upgradePanel.setVisible(this.upgradePanelVisible);
     });
 
-    this.add.text(w - 10, 10, '[TAB] Upgrades', {
+    this.add.text(w - 10, 10, '[TAB] Upgrades  [ESC] Menu', {
       fontSize: '11px', color: '#555',
     }).setOrigin(1, 0).setDepth(20);
+
+    // ---- Escape menu ----
+    this.escMenuContainer = this.add.container(w / 2, h / 2).setDepth(80).setVisible(false);
+    this.escMenuVisible = false;
+
+    this.input.keyboard.on('keydown-ESC', (e) => {
+      e.preventDefault();
+      this.escMenuVisible = !this.escMenuVisible;
+      if (this.escMenuVisible) {
+        this._buildEscMenu();
+      } else {
+        // Re-show powerup selection if it was active when menu opened
+        if (this.powerUpActive) {
+          this.powerUpContainer.setVisible(true);
+        }
+      }
+      this.escMenuContainer.setVisible(this.escMenuVisible);
+    });
 
     // ---- Game over container ----
     this.gameOverContainer = this.add.container(w / 2, h / 2).setDepth(60).setVisible(false);
@@ -87,6 +107,19 @@ export class UIScene extends Phaser.Scene {
     this.powerUpContainer = this.add.container(w / 2, h / 2).setDepth(60).setVisible(false);
     this.powerUpActive = false;
 
+    // ---- Shop container (arena mode) ----
+    this.shopContainer = this.add.container(w / 2, h / 2).setDepth(65).setVisible(false);
+
+    // ---- Spell slots HUD (arena mode, bottom center) ----
+    this.spellSlotsContainer = this.add.container(w / 2, h - 50).setDepth(25).setVisible(false);
+    this.currentSpells = ['fireball'];
+    this.activeSpellSlot = 0;
+
+    // ---- Gold display (arena mode, top right) ----
+    this.goldText = this.add.text(w - 10, 30, '', {
+      fontSize: '14px', color: '#ffa726', fontStyle: 'bold',
+    }).setOrigin(1, 0).setDepth(20).setVisible(false);
+
     // ---- Events from GameScene ----
     const gameScene = this.scene.get('GameScene');
 
@@ -94,7 +127,22 @@ export class UIScene extends Phaser.Scene {
       this.playerInfo = data.players;
       this.scores = data.scores;
       this.winsToWin = data.winsToWin;
+      this.gameMode = data.gameMode || 'roguelike';
+      // Reset UI state
+      this.powerUpActive = false;
+      this.escMenuVisible = false;
+      this.powerUpContainer.setVisible(false);
+      this.escMenuContainer.setVisible(false);
+      this.gameOverContainer.setVisible(false);
+      this.shopContainer.setVisible(false);
       this._drawScoreboard();
+      // Arena mode: show spell slots and gold
+      if (this.gameMode === 'arena') {
+        this.spellSlotsContainer.setVisible(true);
+        this.goldText.setVisible(true);
+        this._drawSpellSlots();
+        this._updateGoldDisplay(0);
+      }
     });
 
     gameScene.events.on('round-start', (roundNum) => {
@@ -102,6 +150,7 @@ export class UIScene extends Phaser.Scene {
       this.roundOverText.setVisible(false);
       this.powerUpContainer.setVisible(false);
       this.gameOverContainer.setVisible(false);
+      this.shopContainer.setVisible(false);
       this.powerUpActive = false;
     });
 
@@ -162,6 +211,47 @@ export class UIScene extends Phaser.Scene {
 
     gameScene.events.on('winner-skip-upgrade', () => {
       this._showWinnerWaiting();
+    });
+
+    // Arena mode: shop events
+    gameScene.events.on('show-shop', (data) => {
+      if (this.gameMode === 'arena') {
+        this._showShop(data);
+      }
+    });
+
+    gameScene.events.on('shop-closed', () => {
+      this.shopContainer.setVisible(false);
+    });
+
+    gameScene.events.on('shop-update', (data) => {
+      if (this.gameMode === 'arena' && this.shopContainer.visible) {
+        this._shopData = data;
+        this._showShop(data);
+      }
+    });
+
+    gameScene.events.on('spell-switched', (data) => {
+      this.currentSpells = data.spells;
+      this.activeSpellSlot = data.activeSlot;
+      this._drawSpellSlots();
+    });
+
+    // Clean up listeners on shutdown to prevent duplicates on reconnect
+    this.events.on('shutdown', () => {
+      gameScene.events.off('game-started');
+      gameScene.events.off('round-start');
+      gameScene.events.off('countdown');
+      gameScene.events.off('round-over');
+      gameScene.events.off('game-over');
+      gameScene.events.off('game-extended');
+      gameScene.events.off('upgrade-waiting');
+      gameScene.events.off('show-powerup-selection');
+      gameScene.events.off('winner-skip-upgrade');
+      gameScene.events.off('show-shop');
+      gameScene.events.off('shop-closed');
+      gameScene.events.off('shop-update');
+      gameScene.events.off('spell-switched');
     });
   }
 
@@ -294,6 +384,98 @@ export class UIScene extends Phaser.Scene {
           this.upgradePanel.add(uText);
         });
       }
+    });
+  }
+
+  // ---- Escape Menu ----
+
+  _buildEscMenu() {
+    this.escMenuContainer.removeAll(true);
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+
+    // Dim background
+    const dimBg = this.add.graphics();
+    dimBg.fillStyle(0x000000, 0.7);
+    dimBg.fillRect(-w / 2, -h / 2, w, h);
+    this.escMenuContainer.add(dimBg);
+
+    // Panel
+    const panelW = 280;
+    const panelH = 200;
+    const panel = this.add.graphics();
+    panel.fillStyle(0x16213e, 0.95);
+    panel.fillRoundedRect(-panelW / 2, -panelH / 2, panelW, panelH, 12);
+    panel.lineStyle(2, 0xe94560, 0.7);
+    panel.strokeRoundedRect(-panelW / 2, -panelH / 2, panelW, panelH, 12);
+    this.escMenuContainer.add(panel);
+
+    // Title
+    const title = this.add.text(0, -panelH / 2 + 28, 'Menu', {
+      fontSize: '24px', color: '#e94560', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.escMenuContainer.add(title);
+
+    // Resume button
+    const btnW = 200;
+    const btnH = 40;
+
+    const resumeBtn = this.add.graphics();
+    resumeBtn.fillStyle(0x0f3460, 0.95);
+    resumeBtn.fillRoundedRect(-btnW / 2, -15, btnW, btnH, 8);
+    resumeBtn.lineStyle(2, 0x4fc3f7, 0.7);
+    resumeBtn.strokeRoundedRect(-btnW / 2, -15, btnW, btnH, 8);
+    this.escMenuContainer.add(resumeBtn);
+
+    const resumeLabel = this.add.text(0, 5, 'Resume', {
+      fontSize: '15px', color: '#4fc3f7', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.escMenuContainer.add(resumeLabel);
+
+    const resumeZone = this.add.zone(0, 5, btnW, btnH).setInteractive({ useHandCursor: true });
+    this.escMenuContainer.add(resumeZone);
+    resumeZone.on('pointerover', () => {
+      resumeBtn.clear();
+      resumeBtn.fillStyle(0x163d6e, 0.95); resumeBtn.fillRoundedRect(-btnW / 2, -15, btnW, btnH, 8);
+      resumeBtn.lineStyle(3, 0x4fc3f7, 1); resumeBtn.strokeRoundedRect(-btnW / 2, -15, btnW, btnH, 8);
+    });
+    resumeZone.on('pointerout', () => {
+      resumeBtn.clear();
+      resumeBtn.fillStyle(0x0f3460, 0.95); resumeBtn.fillRoundedRect(-btnW / 2, -15, btnW, btnH, 8);
+      resumeBtn.lineStyle(2, 0x4fc3f7, 0.7); resumeBtn.strokeRoundedRect(-btnW / 2, -15, btnW, btnH, 8);
+    });
+    resumeZone.on('pointerdown', () => {
+      this.escMenuVisible = false;
+      this.escMenuContainer.setVisible(false);
+    });
+
+    // Main Menu button
+    const menuBtn = this.add.graphics();
+    menuBtn.fillStyle(0x3b1226, 0.95);
+    menuBtn.fillRoundedRect(-btnW / 2, 40, btnW, btnH, 8);
+    menuBtn.lineStyle(2, 0xe94560, 0.7);
+    menuBtn.strokeRoundedRect(-btnW / 2, 40, btnW, btnH, 8);
+    this.escMenuContainer.add(menuBtn);
+
+    const menuLabel = this.add.text(0, 60, 'Return to Main Menu', {
+      fontSize: '15px', color: '#e94560', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.escMenuContainer.add(menuLabel);
+
+    const menuZone = this.add.zone(0, 60, btnW, btnH).setInteractive({ useHandCursor: true });
+    this.escMenuContainer.add(menuZone);
+    menuZone.on('pointerover', () => {
+      menuBtn.clear();
+      menuBtn.fillStyle(0x4e1830, 0.95); menuBtn.fillRoundedRect(-btnW / 2, 40, btnW, btnH, 8);
+      menuBtn.lineStyle(3, 0xe94560, 1); menuBtn.strokeRoundedRect(-btnW / 2, 40, btnW, btnH, 8);
+    });
+    menuZone.on('pointerout', () => {
+      menuBtn.clear();
+      menuBtn.fillStyle(0x3b1226, 0.95); menuBtn.fillRoundedRect(-btnW / 2, 40, btnW, btnH, 8);
+      menuBtn.lineStyle(2, 0xe94560, 0.7); menuBtn.strokeRoundedRect(-btnW / 2, 40, btnW, btnH, 8);
+    });
+    menuZone.on('pointerdown', () => {
+      window.location.reload();
     });
   }
 
@@ -493,6 +675,283 @@ export class UIScene extends Phaser.Scene {
     });
   }
 
+  // ---- Arena Mode: Spell Slots HUD ----
+
+  _drawSpellSlots() {
+    this.spellSlotsContainer.removeAll(true);
+    const slotSize = 44;
+    const gap = 6;
+    const totalW = MAX_SPELL_SLOTS * slotSize + (MAX_SPELL_SLOTS - 1) * gap;
+    const startX = -totalW / 2 + slotSize / 2;
+
+    for (let i = 0; i < MAX_SPELL_SLOTS; i++) {
+      const cx = startX + i * (slotSize + gap);
+      const spellId = this.currentSpells[i];
+      const def = spellId ? SPELL_DEFS[spellId] : null;
+      const isActive = i === this.activeSpellSlot;
+
+      const bg = this.add.graphics();
+      bg.fillStyle(def ? 0x16213e : 0x0a0a1e, 0.9);
+      bg.fillRoundedRect(cx - slotSize / 2, -slotSize / 2, slotSize, slotSize, 6);
+      bg.lineStyle(isActive ? 3 : 1, isActive ? 0xe94560 : 0x333333, isActive ? 1 : 0.5);
+      bg.strokeRoundedRect(cx - slotSize / 2, -slotSize / 2, slotSize, slotSize, 6);
+      this.spellSlotsContainer.add(bg);
+
+      if (def) {
+        const icon = this.add.graphics();
+        icon.fillStyle(def.color, 0.8);
+        icon.fillCircle(cx, 0, 12);
+        icon.fillStyle(def.color, 0.3);
+        icon.fillCircle(cx, 0, 16);
+        this.spellSlotsContainer.add(icon);
+      }
+
+      // Key number label
+      const keyText = this.add.text(cx - slotSize / 2 + 4, -slotSize / 2 + 2, `${i + 1}`, {
+        fontSize: '9px', color: '#666',
+      });
+      this.spellSlotsContainer.add(keyText);
+    }
+  }
+
+  _updateGoldDisplay(gold) {
+    this.goldText.setText(`Gold: ${gold}`);
+  }
+
+  // ---- Arena Mode: Shop ----
+
+  _showShop(data) {
+    this.shopContainer.removeAll(true);
+    this.shopContainer.setVisible(true);
+
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+    const gameScene = this.scene.get('GameScene');
+    const localId = network.localPlayerId || gameScene.localPlayerId;
+    const gold = data.gold ? (data.gold[localId] || 0) : 0;
+    const spellData = data.playerSpellData ? data.playerSpellData[localId] : null;
+    const ownedSpells = spellData ? spellData.spells : ['fireball'];
+    const purchased = spellData ? spellData.purchasedUpgrades || [] : [];
+
+    this._updateGoldDisplay(gold);
+
+    // Dim background
+    const dimBg = this.add.graphics();
+    dimBg.fillStyle(0x000000, 0.7);
+    dimBg.fillRect(-w / 2, -h / 2, w, h);
+    this.shopContainer.add(dimBg);
+
+    // Title and gold
+    const title = this.add.text(0, -h / 2 + 25, 'SHOP', {
+      fontSize: '28px', color: '#e94560', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    this.shopContainer.add(title);
+
+    const goldLabel = this.add.text(0, -h / 2 + 55, `Gold: ${gold}`, {
+      fontSize: '16px', color: '#ffa726', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.shopContainer.add(goldLabel);
+
+    // --- Spells section (left side) ---
+    const spellsLabel = this.add.text(-w / 2 + 30, -h / 2 + 85, 'SPELLS', {
+      fontSize: '14px', color: '#4fc3f7', fontStyle: 'bold',
+    });
+    this.shopContainer.add(spellsLabel);
+
+    const buyableSpells = SPELL_IDS.filter((id) => id !== 'fireball');
+    const cardW = 140;
+    const cardH = 150;
+    const spellStartX = -w / 2 + 30 + cardW / 2;
+
+    buyableSpells.forEach((spellId, i) => {
+      const def = SPELL_DEFS[spellId];
+      const cx = spellStartX + i * (cardW + 10) - w / 2 + w / 2;
+      const cy = -h / 2 + 180;
+      const owned = ownedSpells.includes(spellId);
+      const slotsFull = ownedSpells.length >= MAX_SPELL_SLOTS;
+      const canBuy = !owned && !slotsFull && gold >= def.shopPrice;
+
+      const card = this.add.graphics();
+      card.fillStyle(owned ? 0x1a3a1a : 0x16213e, 0.95);
+      card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      card.lineStyle(2, def.color, owned ? 0.3 : 0.7);
+      card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      this.shopContainer.add(card);
+
+      // Spell icon
+      const icon = this.add.graphics();
+      icon.fillStyle(def.color, owned ? 0.3 : 0.8);
+      icon.fillCircle(cx, cy - 30, 16);
+      this.shopContainer.add(icon);
+
+      // Name
+      const nameText = this.add.text(cx, cy + 5, def.name, {
+        fontSize: '12px', color: owned ? '#555' : '#fff', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      this.shopContainer.add(nameText);
+
+      // Desc
+      const descText = this.add.text(cx, cy + 22, def.desc, {
+        fontSize: '9px', color: '#888', align: 'center',
+        wordWrap: { width: cardW - 16 },
+      }).setOrigin(0.5, 0);
+      this.shopContainer.add(descText);
+
+      // Price or OWNED
+      const priceText = this.add.text(cx, cy + cardH / 2 - 16, owned ? 'OWNED' : `${def.shopPrice}g`, {
+        fontSize: '11px', color: owned ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
+      }).setOrigin(0.5);
+      this.shopContainer.add(priceText);
+
+      if (!owned && !slotsFull) {
+        const zone = this.add.zone(cx, cy, cardW, cardH).setInteractive({ useHandCursor: true });
+        this.shopContainer.add(zone);
+        zone.on('pointerover', () => {
+          card.clear();
+          card.fillStyle(0x1e2d52, 0.95);
+          card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+          card.lineStyle(3, def.color, 1);
+          card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+        });
+        zone.on('pointerout', () => {
+          card.clear();
+          card.fillStyle(0x16213e, 0.95);
+          card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+          card.lineStyle(2, def.color, 0.7);
+          card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+        });
+        zone.on('pointerdown', () => {
+          if (network.isHost) {
+            gameScene.submitShopBuySpell(spellId);
+          } else {
+            gameScene.sendShopBuySpell(spellId);
+          }
+        });
+      }
+    });
+
+    // --- Upgrades section (below spells) ---
+    const upgLabel = this.add.text(-w / 2 + 30, -h / 2 + 270, 'UPGRADES', {
+      fontSize: '14px', color: '#4fc3f7', fontStyle: 'bold',
+    });
+    this.shopContainer.add(upgLabel);
+
+    let rowY = -h / 2 + 295;
+    const rowH = 28;
+    const rowW = w - 80;
+
+    // Per-spell upgrades
+    ownedSpells.forEach((spellId) => {
+      const def = SPELL_DEFS[spellId];
+      if (!def) return;
+
+      const headerText = this.add.text(-w / 2 + 40, rowY, def.name, {
+        fontSize: '11px', color: '#' + def.color.toString(16).padStart(6, '0'), fontStyle: 'bold',
+      });
+      this.shopContainer.add(headerText);
+      rowY += 20;
+
+      def.upgrades.forEach((upg) => {
+        const count = purchased.filter((id) => id === upg.id).length;
+        const maxed = upg.maxStacks && count >= upg.maxStacks;
+        const canAfford = gold >= upg.price;
+
+        const rowBg = this.add.graphics();
+        rowBg.fillStyle(0x0f1a2e, 0.8);
+        rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
+        this.shopContainer.add(rowBg);
+
+        const upgName = this.add.text(-w / 2 + 45, rowY + 6, `${upg.title} — ${upg.desc}`, {
+          fontSize: '10px', color: maxed ? '#555' : '#ccc',
+        });
+        this.shopContainer.add(upgName);
+
+        if (count > 0) {
+          const countText = this.add.text(w / 2 - 100, rowY + 6, `x${count}`, {
+            fontSize: '10px', color: '#888',
+          });
+          this.shopContainer.add(countText);
+        }
+
+        const priceLabel = this.add.text(w / 2 - 55, rowY + 6, maxed ? 'MAX' : `${upg.price}g`, {
+          fontSize: '10px', color: maxed ? '#555' : (canAfford ? '#ffa726' : '#666'), fontStyle: 'bold',
+        });
+        this.shopContainer.add(priceLabel);
+
+        if (!maxed) {
+          const zone = this.add.zone(0, rowY + rowH / 2, rowW, rowH).setInteractive({ useHandCursor: true });
+          this.shopContainer.add(zone);
+          zone.on('pointerover', () => {
+            rowBg.clear(); rowBg.fillStyle(0x1a2640, 0.9); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
+          });
+          zone.on('pointerout', () => {
+            rowBg.clear(); rowBg.fillStyle(0x0f1a2e, 0.8); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
+          });
+          zone.on('pointerdown', () => {
+            if (network.isHost) {
+              gameScene.submitShopBuyUpgrade(upg.id);
+            } else {
+              gameScene.sendShopBuyUpgrade(upg.id);
+            }
+          });
+        }
+
+        rowY += rowH + 3;
+      });
+
+      rowY += 8;
+    });
+
+    // Global upgrades
+    const globalLabel = this.add.text(-w / 2 + 40, rowY, 'General', {
+      fontSize: '11px', color: '#888', fontStyle: 'bold',
+    });
+    this.shopContainer.add(globalLabel);
+    rowY += 20;
+
+    GLOBAL_UPGRADES.forEach((upg) => {
+      const count = purchased.filter((id) => id === upg.id).length;
+      const maxed = upg.maxStacks && count >= upg.maxStacks;
+      const canAfford = gold >= upg.price;
+
+      const rowBg = this.add.graphics();
+      rowBg.fillStyle(0x0f1a2e, 0.8);
+      rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
+      this.shopContainer.add(rowBg);
+
+      const upgName = this.add.text(-w / 2 + 45, rowY + 6, `${upg.title} — ${upg.desc}`, {
+        fontSize: '10px', color: maxed ? '#555' : '#ccc',
+      });
+      this.shopContainer.add(upgName);
+
+      const priceLabel = this.add.text(w / 2 - 55, rowY + 6, maxed ? 'MAX' : `${upg.price}g`, {
+        fontSize: '10px', color: maxed ? '#555' : (canAfford ? '#ffa726' : '#666'), fontStyle: 'bold',
+      });
+      this.shopContainer.add(priceLabel);
+
+      if (!maxed) {
+        const zone = this.add.zone(0, rowY + rowH / 2, rowW, rowH).setInteractive({ useHandCursor: true });
+        this.shopContainer.add(zone);
+        zone.on('pointerover', () => {
+          rowBg.clear(); rowBg.fillStyle(0x1a2640, 0.9); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
+        });
+        zone.on('pointerout', () => {
+          rowBg.clear(); rowBg.fillStyle(0x0f1a2e, 0.8); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
+        });
+        zone.on('pointerdown', () => {
+          if (network.isHost) {
+            gameScene.submitShopBuyUpgrade(upg.id);
+          } else {
+            gameScene.sendShopBuyUpgrade(upg.id);
+          }
+        });
+      }
+
+      rowY += rowH + 3;
+    });
+  }
+
   _showWinnerWaiting() {
     this.powerUpContainer.removeAll(true);
     this.powerUpContainer.setVisible(true);
@@ -530,7 +989,7 @@ export class UIScene extends Phaser.Scene {
   }
 
   _selectUpgrade(upgradeId) {
-    if (!this.powerUpActive) return;
+    if (!this.powerUpActive || this.escMenuVisible) return;
     this.powerUpActive = false;
 
     const gameScene = this.scene.get('GameScene');

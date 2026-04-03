@@ -15,13 +15,23 @@ export class NetworkManager {
     this.playerName = '';
     this.players = new Map(); // playerId -> { name, peerId }
 
+    this.gameStarted = false;
+    this.testMode = false;
+
+    // Disconnected players eligible for reconnection (name -> original peerId)
+    this.disconnectedPlayers = new Map();
+
     // Callbacks
     this.onPlayerJoined = null;
     this.onPlayerLeft = null;
+    this.onPlayerReconnected = null;
     this.onGameStart = null;
     this.onGameState = null;
     this.onPlayerInput = null;
     this.onPlayerListUpdate = null;
+    this.onShowShop = null;
+    this.onShopClosed = null;
+    this.onShopUpdate = null;
   }
 
   _generateCode() {
@@ -133,6 +143,50 @@ export class NetworkManager {
   _handleHostMessage(conn, data) {
     switch (data.type) {
       case 'join': {
+        // Check if this is a reconnection attempt during an active game
+        if (this.gameStarted && this.disconnectedPlayers.has(data.name)) {
+          const originalPeerId = this.disconnectedPlayers.get(data.name);
+          this.disconnectedPlayers.delete(data.name);
+
+          // Map the new connection under the original peerId
+          this.connections.set(originalPeerId, conn);
+          // Tag the connection so input routing uses the original peerId
+          conn._originalPeerId = originalPeerId;
+
+          // Restore the player entry
+          this.players.set(originalPeerId, {
+            name: data.name,
+            peerId: originalPeerId,
+            isHost: false,
+          });
+
+          // Tell the reconnecting client their restored peerId and current game state
+          conn.send({
+            type: 'reconnect',
+            originalPeerId,
+            players: Array.from(this.players.values()),
+            gameMode: this._lastGameMode,
+          });
+
+          // Broadcast updated player list
+          this.broadcastToClients({
+            type: 'player-list',
+            players: Array.from(this.players.values()),
+          });
+
+          if (this.onPlayerReconnected) this.onPlayerReconnected(originalPeerId, data.name);
+          if (this.onPlayerListUpdate) {
+            this.onPlayerListUpdate(Array.from(this.players.values()));
+          }
+          break;
+        }
+
+        // Normal join (game hasn't started)
+        if (this.gameStarted) {
+          conn.send({ type: 'error', message: 'Game already in progress. Use the same name to reconnect.' });
+          conn.close();
+          return;
+        }
         if (this.players.size >= 8) {
           conn.send({ type: 'error', message: 'Game is full (max 8 players).' });
           conn.close();
@@ -164,7 +218,9 @@ export class NetworkManager {
         break;
       }
       case 'input': {
-        if (this.onPlayerInput) this.onPlayerInput(conn.peer, data);
+        // Route input using original peerId if this is a reconnected player
+        const peerId = conn._originalPeerId || conn.peer;
+        if (this.onPlayerInput) this.onPlayerInput(peerId, data);
         break;
       }
     }
@@ -173,7 +229,16 @@ export class NetworkManager {
   _handleDisconnect(peerId) {
     this.connections.delete(peerId);
     const player = this.players.get(peerId);
-    this.players.delete(peerId);
+
+    if (this.gameStarted && player) {
+      // Keep the player slot for reconnection, store name -> original peerId
+      this.disconnectedPlayers.set(player.name, peerId);
+      // Mark them as disconnected but keep in players map
+      player.disconnected = true;
+      this.players.set(peerId, player);
+    } else {
+      this.players.delete(peerId);
+    }
 
     this.broadcastToClients({
       type: 'player-list',
@@ -197,6 +262,19 @@ export class NetworkManager {
         case 'game-start':
           if (this.onGameStart) this.onGameStart(data);
           break;
+        case 'reconnect':
+          // Server assigned us our original peerId back
+          this.localPlayerId = data.originalPeerId;
+          this.players.clear();
+          data.players.forEach((p) => this.players.set(p.peerId, p));
+          if (this.onPlayerListUpdate) this.onPlayerListUpdate(data.players);
+          if (this.onGameStart) this.onGameStart({
+            type: 'game-start',
+            players: data.players,
+            gameMode: data.gameMode,
+            reconnect: true,
+          });
+          break;
         case 'game-state':
           if (this.onGameState) this.onGameState(data);
           break;
@@ -208,6 +286,15 @@ export class NetworkManager {
           break;
         case 'game-start-round':
           if (this.onStartRound) this.onStartRound(data);
+          break;
+        case 'show-shop':
+          if (this.onShowShop) this.onShowShop(data);
+          break;
+        case 'shop-closed':
+          if (this.onShopClosed) this.onShopClosed(data);
+          break;
+        case 'shop-update':
+          if (this.onShopUpdate) this.onShopUpdate(data);
           break;
         case 'error':
           console.error('Server error:', data.message);
@@ -244,11 +331,14 @@ export class NetworkManager {
   /**
    * Host starts the game.
    */
-  startGame() {
+  startGame(gameMode) {
     if (!this.isHost) return;
+    this.gameStarted = true;
+    this._lastGameMode = gameMode || 'roguelike';
     const startData = {
       type: 'game-start',
       players: Array.from(this.players.values()),
+      gameMode: this._lastGameMode,
     };
     this.broadcastToClients(startData);
     if (this.onGameStart) this.onGameStart(startData);

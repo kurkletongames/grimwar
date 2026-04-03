@@ -10,6 +10,7 @@ export { FIREBALL_COOLDOWN, BASE_FIREBALL_SPEED, BASE_FIREBALL_DAMAGE, BASE_FIRE
 export class Fireball {
   constructor(scene, x, y, dirX, dirY, ownerPlayerId, stats = {}) {
     this.scene = scene;
+    this.spellId = 'fireball';
     this.ownerPlayerId = ownerPlayerId;
     this.x = x;
     this.y = y;
@@ -114,6 +115,7 @@ export class Fireball {
 
   serialize() {
     return {
+      spellId: 'fireball',
       x: this.x,
       y: this.y,
       velX: this.velX,
@@ -124,6 +126,7 @@ export class Fireball {
       knockback: this.knockback,
       radius: this.radius,
       piercing: this.piercing,
+      lifesteal: this.lifesteal,
     };
   }
 

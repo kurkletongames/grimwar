@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { WIZARD_COLORS } from '../entities/Wizard.js';
 import { UPGRADES } from './GameScene.js';
 import { network } from '../network/NetworkManager.js';
-import { SPELL_DEFS, SPELL_IDS, GLOBAL_UPGRADES, MAX_SPELL_SLOTS } from '../data/SpellDefinitions.js';
+import { SPELL_DEFS, BLINK_DEFS, GLOBAL_UPGRADES, SPELL_CATEGORIES, SLOT_KEYS, SPELLS_BY_CATEGORY, BLINK_IDS, MAX_SPELL_SLOTS, MAX_TIER } from '../data/SpellDefinitions.js';
 
 const RARITY_COLORS = {
   common:    0x888888,
@@ -112,8 +112,8 @@ export class UIScene extends Phaser.Scene {
 
     // ---- Spell slots HUD (arena mode, bottom center) ----
     this.spellSlotsContainer = this.add.container(w / 2, h - 50).setDepth(25).setVisible(false);
-    this.currentSpells = ['fireball'];
-    this.activeSpellSlot = 0;
+    this.currentSlots = { fixed: 'fireball', bread_butter: null, tricky: null, power: null };
+    this.activeSpellSlot = 'fixed';
 
     // ---- Gold display (arena mode, top right) ----
     this.goldText = this.add.text(w - 10, 30, '', {
@@ -222,6 +222,10 @@ export class UIScene extends Phaser.Scene {
 
     gameScene.events.on('shop-closed', () => {
       this.shopContainer.setVisible(false);
+      if (this._shopTimerEvent) {
+        this._shopTimerEvent.remove();
+        this._shopTimerEvent = null;
+      }
     });
 
     gameScene.events.on('shop-update', (data) => {
@@ -231,8 +235,14 @@ export class UIScene extends Phaser.Scene {
       }
     });
 
+    gameScene.events.on('shop-ready-update', (data) => {
+      if (this._shopReadyText) {
+        this._shopReadyText.setText(`${data.ready}/${data.total} Ready`);
+      }
+    });
+
     gameScene.events.on('spell-switched', (data) => {
-      this.currentSpells = data.spells;
+      this.currentSlots = data.slots;
       this.activeSpellSlot = data.activeSlot;
       this._drawSpellSlots();
     });
@@ -251,6 +261,7 @@ export class UIScene extends Phaser.Scene {
       gameScene.events.off('show-shop');
       gameScene.events.off('shop-closed');
       gameScene.events.off('shop-update');
+      gameScene.events.off('shop-ready-update');
       gameScene.events.off('spell-switched');
     });
   }
@@ -684,11 +695,12 @@ export class UIScene extends Phaser.Scene {
     const totalW = MAX_SPELL_SLOTS * slotSize + (MAX_SPELL_SLOTS - 1) * gap;
     const startX = -totalW / 2 + slotSize / 2;
 
-    for (let i = 0; i < MAX_SPELL_SLOTS; i++) {
+    SLOT_KEYS.forEach((cat, i) => {
       const cx = startX + i * (slotSize + gap);
-      const spellId = this.currentSpells[i];
+      const spellId = this.currentSlots[cat];
       const def = spellId ? SPELL_DEFS[spellId] : null;
-      const isActive = i === this.activeSpellSlot;
+      const isActive = cat === this.activeSpellSlot;
+      const catDef = SPELL_CATEGORIES[cat];
 
       const bg = this.add.graphics();
       bg.fillStyle(def ? 0x16213e : 0x0a0a1e, 0.9);
@@ -711,7 +723,13 @@ export class UIScene extends Phaser.Scene {
         fontSize: '9px', color: '#666',
       });
       this.spellSlotsContainer.add(keyText);
-    }
+
+      // Category label below slot
+      const catLabel = this.add.text(cx, slotSize / 2 + 4, cat === 'fixed' ? '' : catDef.label, {
+        fontSize: '7px', color: '#555',
+      }).setOrigin(0.5, 0);
+      this.spellSlotsContainer.add(catLabel);
+    });
   }
 
   _updateGoldDisplay(gold) {
@@ -719,6 +737,41 @@ export class UIScene extends Phaser.Scene {
   }
 
   // ---- Arena Mode: Shop ----
+
+  _makeShopRow(rowX, rowY, rowW, rowH, label, priceStr, canAfford, onClick) {
+    const rowBg = this.add.graphics();
+    const draw = (state) => {
+      rowBg.clear();
+      if (state === 'hover') {
+        rowBg.fillStyle(0x1e2d52, 0.95);
+        rowBg.fillRoundedRect(rowX, rowY, rowW, rowH, 4);
+        rowBg.lineStyle(1, canAfford ? 0xffa726 : 0x555555, 0.6);
+        rowBg.strokeRoundedRect(rowX, rowY, rowW, rowH, 4);
+      } else if (state === 'click') {
+        rowBg.fillStyle(canAfford ? 0x2a3a20 : 0x3a2020, 1);
+        rowBg.fillRoundedRect(rowX, rowY, rowW, rowH, 4);
+      } else {
+        rowBg.fillStyle(0x0f1a2e, 0.8);
+        rowBg.fillRoundedRect(rowX, rowY, rowW, rowH, 4);
+      }
+    };
+    draw('normal');
+    this.shopContainer.add(rowBg);
+
+    this.shopContainer.add(this.add.text(rowX + 10, rowY + 5, label, {
+      fontSize: '10px', color: '#ccc',
+    }));
+
+    this.shopContainer.add(this.add.text(rowX + rowW - 10, rowY + 5, priceStr, {
+      fontSize: '10px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
+    }).setOrigin(1, 0));
+
+    const zone = this.add.zone(rowX + rowW / 2, rowY + rowH / 2, rowW, rowH).setInteractive({ useHandCursor: true });
+    this.shopContainer.add(zone);
+    zone.on('pointerover', () => draw('hover'));
+    zone.on('pointerout', () => draw('normal'));
+    zone.on('pointerdown', () => { draw('click'); onClick(); });
+  }
 
   _showShop(data) {
     this.shopContainer.removeAll(true);
@@ -729,226 +782,264 @@ export class UIScene extends Phaser.Scene {
     const gameScene = this.scene.get('GameScene');
     const localId = network.localPlayerId || gameScene.localPlayerId;
     const gold = data.gold ? (data.gold[localId] || 0) : 0;
-    const spellData = data.playerSpellData ? data.playerSpellData[localId] : null;
-    const ownedSpells = spellData ? spellData.spells : ['fireball'];
-    const purchased = spellData ? spellData.purchasedUpgrades || [] : [];
+    const sd = data.playerSpellData ? data.playerSpellData[localId] : null;
+    const slots = sd ? sd.slots : { fixed: 'fireball', bread_butter: null, tricky: null, power: null };
+    const tiers = sd ? sd.spellTiers || {} : {};
+    const blinkId = sd ? sd.blinkId : 'default_blink';
+    const blinkTier = sd ? sd.blinkTier || 0 : 0;
 
     this._updateGoldDisplay(gold);
 
     // Dim background
     const dimBg = this.add.graphics();
-    dimBg.fillStyle(0x000000, 0.7);
+    dimBg.fillStyle(0x000000, 0.75);
     dimBg.fillRect(-w / 2, -h / 2, w, h);
     this.shopContainer.add(dimBg);
 
-    // Title and gold
-    const title = this.add.text(0, -h / 2 + 25, 'SHOP', {
-      fontSize: '28px', color: '#e94560', fontStyle: 'bold',
-      stroke: '#000', strokeThickness: 3,
-    }).setOrigin(0.5);
-    this.shopContainer.add(title);
+    // Timer + Title + Gold header
+    const shopDuration = data.shopDuration || 30000;
+    const startTime = Date.now();
+    const timerText = this.add.text(w / 2 - 20, -h / 2 + 12, '30s', { fontSize: '12px', color: '#888' }).setOrigin(1, 0);
+    this.shopContainer.add(timerText);
+    if (this._shopTimerEvent) this._shopTimerEvent.remove();
+    this._shopTimerEvent = this.time.addEvent({ delay: 500, loop: true, callback: () => {
+      const rem = Math.max(0, Math.ceil((shopDuration - (Date.now() - startTime)) / 1000));
+      timerText.setText(`${rem}s`);
+      if (rem <= 0 && this._shopTimerEvent) { this._shopTimerEvent.remove(); this._shopTimerEvent = null; }
+    }});
 
-    const goldLabel = this.add.text(0, -h / 2 + 55, `Gold: ${gold}`, {
-      fontSize: '16px', color: '#ffa726', fontStyle: 'bold',
-    }).setOrigin(0.5);
-    this.shopContainer.add(goldLabel);
+    this.shopContainer.add(this.add.text(0, -h / 2 + 12, 'SHOP', {
+      fontSize: '20px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5));
+    this.shopContainer.add(this.add.text(0, -h / 2 + 36, `Gold: ${gold}`, {
+      fontSize: '13px', color: '#ffa726', fontStyle: 'bold',
+    }).setOrigin(0.5));
 
-    // --- Spells section (left side) ---
-    const spellsLabel = this.add.text(-w / 2 + 30, -h / 2 + 85, 'SPELLS', {
-      fontSize: '14px', color: '#4fc3f7', fontStyle: 'bold',
+    // ---- Spell category columns (compact) ----
+    const categories = ['bread_butter', 'tricky', 'power'];
+    const colW = (w - 40) / 3;
+    const cardW = Math.min(colW - 8, 120);
+    const cardH = 75;
+    const colStartX = -w / 2 + 20;
+    const spellTopY = -h / 2 + 54;
+
+    categories.forEach((cat, ci) => {
+      const catDef = SPELL_CATEGORIES[cat];
+      const colX = colStartX + ci * colW;
+      const colorHex = '#' + catDef.color.toString(16).padStart(6, '0');
+
+      this.shopContainer.add(this.add.text(colX + colW / 2, spellTopY, catDef.label, {
+        fontSize: '10px', color: colorHex, fontStyle: 'bold',
+      }).setOrigin(0.5));
+
+      const spellIds = SPELLS_BY_CATEGORY[cat];
+      const equipped = slots[cat];
+
+      spellIds.forEach((spellId, si) => {
+        const def = SPELL_DEFS[spellId];
+        const cx = colX + colW / 2;
+        const cy = spellTopY + 16 + si * (cardH + 4) + cardH / 2;
+        const isEquipped = equipped === spellId;
+        const canBuy = !isEquipped && gold >= def.shopPrice;
+
+        const card = this.add.graphics();
+        const drawCard = (hover) => {
+          card.clear();
+          card.fillStyle(isEquipped ? 0x1a3a1a : (hover ? 0x1e2d52 : 0x16213e), 0.95);
+          card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
+          card.lineStyle(hover ? 3 : 2, def.color, isEquipped ? 0.8 : (hover ? 1 : 0.4));
+          card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
+        };
+        drawCard(false);
+        this.shopContainer.add(card);
+
+        const icon = this.add.graphics();
+        icon.fillStyle(def.color, isEquipped ? 0.9 : 0.6);
+        icon.fillCircle(cx, cy - 16, 10);
+        this.shopContainer.add(icon);
+
+        this.shopContainer.add(this.add.text(cx, cy + 4, def.name, {
+          fontSize: '10px', color: '#fff', fontStyle: 'bold',
+        }).setOrigin(0.5));
+
+        const priceLabel = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
+        this.shopContainer.add(this.add.text(cx, cy + cardH / 2 - 10, priceLabel, {
+          fontSize: '9px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
+        }).setOrigin(0.5));
+
+        if (!isEquipped) {
+          const zone = this.add.zone(cx, cy, cardW, cardH).setInteractive({ useHandCursor: true });
+          this.shopContainer.add(zone);
+          zone.on('pointerover', () => drawCard(true));
+          zone.on('pointerout', () => drawCard(false));
+          zone.on('pointerdown', () => {
+            if (network.isHost) gameScene.submitShopBuySpell(spellId);
+            else gameScene.sendShopBuySpell(spellId);
+          });
+        }
+      });
     });
-    this.shopContainer.add(spellsLabel);
 
-    const buyableSpells = SPELL_IDS.filter((id) => id !== 'fireball');
-    const cardW = 140;
-    const cardH = 150;
-    const spellStartX = -w / 2 + 30 + cardW / 2;
+    // ---- Blink variants (compact row) ----
+    const blinkTopY = spellTopY + 16 + 3 * (cardH + 4) + 10;
+    this.shopContainer.add(this.add.text(0, blinkTopY, 'BLINK (Space)', {
+      fontSize: '10px', color: '#4fc3f7', fontStyle: 'bold',
+    }).setOrigin(0.5));
 
-    buyableSpells.forEach((spellId, i) => {
-      const def = SPELL_DEFS[spellId];
-      const cx = spellStartX + i * (cardW + 10) - w / 2 + w / 2;
-      const cy = -h / 2 + 180;
-      const owned = ownedSpells.includes(spellId);
-      const slotsFull = ownedSpells.length >= MAX_SPELL_SLOTS;
-      const canBuy = !owned && !slotsFull && gold >= def.shopPrice;
+    const blinkCardW = Math.min(120, (w - 60) / 3);
+    const blinkCardH = 50;
+    const blinkStartX = -(BLINK_IDS.length * blinkCardW + (BLINK_IDS.length - 1) * 8) / 2 + blinkCardW / 2;
+
+    BLINK_IDS.forEach((bid, i) => {
+      const def = BLINK_DEFS[bid];
+      const cx = blinkStartX + i * (blinkCardW + 8);
+      const cy = blinkTopY + 14 + blinkCardH / 2;
+      const isEquipped = blinkId === bid;
+      const canBuy = !isEquipped && gold >= def.shopPrice;
 
       const card = this.add.graphics();
-      card.fillStyle(owned ? 0x1a3a1a : 0x16213e, 0.95);
-      card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
-      card.lineStyle(2, def.color, owned ? 0.3 : 0.7);
-      card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      const drawBCard = (hover) => {
+        card.clear();
+        card.fillStyle(isEquipped ? 0x1a3a1a : (hover ? 0x1e2d52 : 0x16213e), 0.95);
+        card.fillRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
+        card.lineStyle(hover ? 3 : 2, def.color, isEquipped ? 0.8 : (hover ? 1 : 0.4));
+        card.strokeRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
+      };
+      drawBCard(false);
       this.shopContainer.add(card);
 
-      // Spell icon
-      const icon = this.add.graphics();
-      icon.fillStyle(def.color, owned ? 0.3 : 0.8);
-      icon.fillCircle(cx, cy - 30, 16);
-      this.shopContainer.add(icon);
+      this.shopContainer.add(this.add.text(cx, cy - 8, def.name, {
+        fontSize: '9px', color: '#fff', fontStyle: 'bold',
+      }).setOrigin(0.5));
 
-      // Name
-      const nameText = this.add.text(cx, cy + 5, def.name, {
-        fontSize: '12px', color: owned ? '#555' : '#fff', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      this.shopContainer.add(nameText);
+      const label = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
+      this.shopContainer.add(this.add.text(cx, cy + 10, label, {
+        fontSize: '8px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
+      }).setOrigin(0.5));
 
-      // Desc
-      const descText = this.add.text(cx, cy + 22, def.desc, {
-        fontSize: '9px', color: '#888', align: 'center',
-        wordWrap: { width: cardW - 16 },
-      }).setOrigin(0.5, 0);
-      this.shopContainer.add(descText);
-
-      // Price or OWNED
-      const priceText = this.add.text(cx, cy + cardH / 2 - 16, owned ? 'OWNED' : `${def.shopPrice}g`, {
-        fontSize: '11px', color: owned ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
-      }).setOrigin(0.5);
-      this.shopContainer.add(priceText);
-
-      if (!owned && !slotsFull) {
-        const zone = this.add.zone(cx, cy, cardW, cardH).setInteractive({ useHandCursor: true });
+      if (!isEquipped) {
+        const zone = this.add.zone(cx, cy, blinkCardW, blinkCardH).setInteractive({ useHandCursor: true });
         this.shopContainer.add(zone);
-        zone.on('pointerover', () => {
-          card.clear();
-          card.fillStyle(0x1e2d52, 0.95);
-          card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
-          card.lineStyle(3, def.color, 1);
-          card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
-        });
-        zone.on('pointerout', () => {
-          card.clear();
-          card.fillStyle(0x16213e, 0.95);
-          card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
-          card.lineStyle(2, def.color, 0.7);
-          card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
-        });
+        zone.on('pointerover', () => drawBCard(true));
+        zone.on('pointerout', () => drawBCard(false));
         zone.on('pointerdown', () => {
-          if (network.isHost) {
-            gameScene.submitShopBuySpell(spellId);
-          } else {
-            gameScene.sendShopBuySpell(spellId);
-          }
+          if (network.isHost) gameScene.submitShopBuyBlink(bid);
+          else gameScene.sendShopBuyBlink(bid);
         });
       }
     });
 
-    // --- Upgrades section (below spells) ---
-    const upgLabel = this.add.text(-w / 2 + 30, -h / 2 + 270, 'UPGRADES', {
-      fontSize: '14px', color: '#4fc3f7', fontStyle: 'bold',
-    });
-    this.shopContainer.add(upgLabel);
+    // ---- Upgrades section (compact rows) ----
+    const upgTopY = blinkTopY + 14 + blinkCardH + 8;
+    this.shopContainer.add(this.add.text(-w / 2 + 20, upgTopY, 'UPGRADES', {
+      fontSize: '10px', color: '#4fc3f7', fontStyle: 'bold',
+    }));
 
-    let rowY = -h / 2 + 295;
-    const rowH = 28;
-    const rowW = w - 80;
+    let rowY = upgTopY + 16;
+    const rowH = 22;
+    const rowW = w - 50;
+    const rowX = -w / 2 + 20;
 
-    // Per-spell upgrades
+    // Spell tier upgrades
+    const ownedSpells = Object.values(slots).filter(Boolean);
     ownedSpells.forEach((spellId) => {
       const def = SPELL_DEFS[spellId];
-      if (!def) return;
+      if (!def || !def.tiers) return;
+      const currentTier = tiers[spellId] || 0;
+      const nextTier = currentTier + 1;
+      const maxed = nextTier > MAX_TIER;
+      const tierDef = maxed ? null : def.tiers[nextTier];
+      const canAfford = tierDef && gold >= tierDef.price;
+      const colorHex = '#' + def.color.toString(16).padStart(6, '0');
 
-      const headerText = this.add.text(-w / 2 + 40, rowY, def.name, {
-        fontSize: '11px', color: '#' + def.color.toString(16).padStart(6, '0'), fontStyle: 'bold',
-      });
-      this.shopContainer.add(headerText);
-      rowY += 20;
+      // Tier dots inline with name
+      let label = `${def.name} `;
+      for (let t = 1; t <= MAX_TIER; t++) label += t <= currentTier ? '\u25CF' : '\u25CB';
+      label += maxed ? '  MAX' : `  Lv${nextTier}: ${tierDef.desc}`;
+      const price = maxed ? '' : `${tierDef.price}g`;
 
-      def.upgrades.forEach((upg) => {
-        const count = purchased.filter((id) => id === upg.id).length;
-        const maxed = upg.maxStacks && count >= upg.maxStacks;
-        const canAfford = gold >= upg.price;
-
-        const rowBg = this.add.graphics();
-        rowBg.fillStyle(0x0f1a2e, 0.8);
-        rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
-        this.shopContainer.add(rowBg);
-
-        const upgName = this.add.text(-w / 2 + 45, rowY + 6, `${upg.title} — ${upg.desc}`, {
-          fontSize: '10px', color: maxed ? '#555' : '#ccc',
-        });
-        this.shopContainer.add(upgName);
-
-        if (count > 0) {
-          const countText = this.add.text(w / 2 - 100, rowY + 6, `x${count}`, {
-            fontSize: '10px', color: '#888',
-          });
-          this.shopContainer.add(countText);
-        }
-
-        const priceLabel = this.add.text(w / 2 - 55, rowY + 6, maxed ? 'MAX' : `${upg.price}g`, {
-          fontSize: '10px', color: maxed ? '#555' : (canAfford ? '#ffa726' : '#666'), fontStyle: 'bold',
-        });
-        this.shopContainer.add(priceLabel);
-
+      this._makeShopRow(rowX, rowY, rowW, rowH, label, price, canAfford && !maxed, () => {
         if (!maxed) {
-          const zone = this.add.zone(0, rowY + rowH / 2, rowW, rowH).setInteractive({ useHandCursor: true });
-          this.shopContainer.add(zone);
-          zone.on('pointerover', () => {
-            rowBg.clear(); rowBg.fillStyle(0x1a2640, 0.9); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
-          });
-          zone.on('pointerout', () => {
-            rowBg.clear(); rowBg.fillStyle(0x0f1a2e, 0.8); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
-          });
-          zone.on('pointerdown', () => {
-            if (network.isHost) {
-              gameScene.submitShopBuyUpgrade(upg.id);
-            } else {
-              gameScene.sendShopBuyUpgrade(upg.id);
-            }
-          });
+          if (network.isHost) gameScene.submitShopBuyTier(spellId);
+          else gameScene.sendShopBuyTier(spellId);
         }
-
-        rowY += rowH + 3;
       });
-
-      rowY += 8;
+      rowY += rowH + 2;
     });
 
-    // Global upgrades
-    const globalLabel = this.add.text(-w / 2 + 40, rowY, 'General', {
-      fontSize: '11px', color: '#888', fontStyle: 'bold',
-    });
-    this.shopContainer.add(globalLabel);
-    rowY += 20;
+    // Blink tier upgrade
+    if (blinkId !== 'default_blink') {
+      const bDef = BLINK_DEFS[blinkId];
+      if (bDef && bDef.tiers) {
+        const nextBT = blinkTier + 1;
+        const bMaxed = nextBT > MAX_TIER;
+        const bTierDef = bMaxed ? null : bDef.tiers[nextBT];
+        const bCanAfford = bTierDef && gold >= bTierDef.price;
 
-    GLOBAL_UPGRADES.forEach((upg) => {
-      const count = purchased.filter((id) => id === upg.id).length;
-      const maxed = upg.maxStacks && count >= upg.maxStacks;
-      const canAfford = gold >= upg.price;
+        let label = `${bDef.name} `;
+        for (let t = 1; t <= MAX_TIER; t++) label += t <= blinkTier ? '\u25CF' : '\u25CB';
+        label += bMaxed ? '  MAX' : `  Lv${nextBT}: ${bTierDef.desc}`;
+        const price = bMaxed ? '' : `${bTierDef.price}g`;
 
-      const rowBg = this.add.graphics();
-      rowBg.fillStyle(0x0f1a2e, 0.8);
-      rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
-      this.shopContainer.add(rowBg);
-
-      const upgName = this.add.text(-w / 2 + 45, rowY + 6, `${upg.title} — ${upg.desc}`, {
-        fontSize: '10px', color: maxed ? '#555' : '#ccc',
-      });
-      this.shopContainer.add(upgName);
-
-      const priceLabel = this.add.text(w / 2 - 55, rowY + 6, maxed ? 'MAX' : `${upg.price}g`, {
-        fontSize: '10px', color: maxed ? '#555' : (canAfford ? '#ffa726' : '#666'), fontStyle: 'bold',
-      });
-      this.shopContainer.add(priceLabel);
-
-      if (!maxed) {
-        const zone = this.add.zone(0, rowY + rowH / 2, rowW, rowH).setInteractive({ useHandCursor: true });
-        this.shopContainer.add(zone);
-        zone.on('pointerover', () => {
-          rowBg.clear(); rowBg.fillStyle(0x1a2640, 0.9); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
-        });
-        zone.on('pointerout', () => {
-          rowBg.clear(); rowBg.fillStyle(0x0f1a2e, 0.8); rowBg.fillRoundedRect(-w / 2 + 35, rowY, rowW, rowH, 4);
-        });
-        zone.on('pointerdown', () => {
-          if (network.isHost) {
-            gameScene.submitShopBuyUpgrade(upg.id);
-          } else {
-            gameScene.sendShopBuyUpgrade(upg.id);
+        this._makeShopRow(rowX, rowY, rowW, rowH, label, price, bCanAfford && !bMaxed, () => {
+          if (!bMaxed) {
+            if (network.isHost) gameScene.submitShopBuyTier(blinkId);
+            else gameScene.sendShopBuyTier(blinkId);
           }
         });
+        rowY += rowH + 2;
       }
+    }
 
-      rowY += rowH + 3;
+    // Global upgrades
+    GLOBAL_UPGRADES.forEach((upg) => {
+      this._makeShopRow(rowX, rowY, rowW, rowH, `${upg.title} — ${upg.desc}`, `${upg.price}g`, gold >= upg.price, () => {
+        if (network.isHost) gameScene.submitShopBuyGlobal(upg.id);
+        else gameScene.sendShopBuyGlobal(upg.id);
+      });
+      rowY += rowH + 2;
+    });
+
+    // ---- Ready button ----
+    const readyY = Math.max(rowY + 10, h / 2 - 50);
+
+    this._shopReadyText = this.add.text(0, readyY, '0/? Ready', {
+      fontSize: '10px', color: '#888',
+    }).setOrigin(0.5);
+    this.shopContainer.add(this._shopReadyText);
+
+    const btnW = 140;
+    const btnH = 30;
+    const btnY = readyY + 14;
+    const readyBtn = this.add.graphics();
+    readyBtn.fillStyle(0x1a6a1a, 0.95);
+    readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+    readyBtn.lineStyle(2, 0x44ff44, 0.7);
+    readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+    this.shopContainer.add(readyBtn);
+
+    const readyLabel = this.add.text(0, btnY + btnH / 2, 'READY', {
+      fontSize: '12px', color: '#44ff44', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.shopContainer.add(readyLabel);
+
+    const readyZone = this.add.zone(0, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
+    this.shopContainer.add(readyZone);
+    readyZone.on('pointerover', () => {
+      readyBtn.clear();
+      readyBtn.fillStyle(0x228a22, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+      readyBtn.lineStyle(3, 0x44ff44, 1); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+    });
+    readyZone.on('pointerout', () => {
+      readyBtn.clear();
+      readyBtn.fillStyle(0x1a6a1a, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+      readyBtn.lineStyle(2, 0x44ff44, 0.7); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+    });
+    readyZone.on('pointerdown', () => {
+      gameScene.submitShopReady();
+      readyLabel.setText('READY!');
+      readyLabel.setColor('#aaffaa');
+      readyZone.disableInteractive();
     });
   }
 

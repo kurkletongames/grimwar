@@ -2,8 +2,9 @@
  * Per-player gold tracking for arena mode shop.
  */
 
-const BASE_ROUND_GOLD = 100;
-const WIN_BONUS_GOLD = 50;
+const BASE_ROUND_GOLD = 150;
+const WIN_BONUS_GOLD = 75;
+const KILL_BONUS_GOLD = 50;
 
 export class GoldManager {
   constructor() {
@@ -19,6 +20,11 @@ export class GoldManager {
       const bonus = playerId === winnerId ? WIN_BONUS_GOLD : 0;
       this.gold.set(playerId, current + BASE_ROUND_GOLD + bonus);
     }
+  }
+
+  awardKillGold(playerId) {
+    const current = this.gold.get(playerId) || 0;
+    this.gold.set(playerId, current + KILL_BONUS_GOLD);
   }
 
   getGold(playerId) {

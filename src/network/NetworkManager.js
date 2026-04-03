@@ -32,6 +32,7 @@ export class NetworkManager {
     this.onShowShop = null;
     this.onShopClosed = null;
     this.onShopUpdate = null;
+    this.onShopReadyUpdate = null;
   }
 
   _generateCode() {
@@ -295,6 +296,9 @@ export class NetworkManager {
           break;
         case 'shop-update':
           if (this.onShopUpdate) this.onShopUpdate(data);
+          break;
+        case 'shop-ready-update':
+          if (this.onShopReadyUpdate) this.onShopReadyUpdate(data);
           break;
         case 'error':
           console.error('Server error:', data.message);

@@ -10,11 +10,17 @@ import {
   BASE_FIREBALL_DAMAGE,
   BASE_FIREBALL_KNOCKBACK,
 } from '../entities/Fireball.js';
-import { IceShard } from '../entities/IceShard.js';
 import { LightningBolt } from '../entities/LightningBolt.js';
 import { Meteor } from '../entities/Meteor.js';
 import { GravitySphere } from '../entities/GravitySphere.js';
-import { SPELL_DEFS, GLOBAL_UPGRADES, SPELL_IDS, MAX_SPELL_SLOTS, createBaseSpellStats, createBaseGlobalUpgrades } from '../data/SpellDefinitions.js';
+import { HomingMissile } from '../entities/HomingMissile.js';
+import { Ricochet } from '../entities/Ricochet.js';
+import { ColorSprayParticle } from '../entities/ColorSpray.js';
+import { Tether } from '../entities/Tether.js';
+import { MirrorImage } from '../entities/MirrorImage.js';
+import { VortexWall } from '../entities/VortexWall.js';
+import { SwapProjectile } from '../entities/SwapProjectile.js';
+import { SPELL_DEFS, BLINK_DEFS, GLOBAL_UPGRADES, SPELL_CATEGORIES, SLOT_KEYS, SPELLS_BY_CATEGORY, BLINK_IDS, MAX_SPELL_SLOTS, MAX_TIER, createBaseSpellStats, createBaseBlinkStats, createBaseGlobalUpgrades } from '../data/SpellDefinitions.js';
 import { GoldManager } from '../systems/GoldManager.js';
 
 const TICK_RATE = 1000 / 30; // 30 ticks per second for smoother sync
@@ -296,6 +302,9 @@ export class GameScene extends Phaser.Scene {
       if (data.playerSpellData) this._applyAllSpellData(data.playerSpellData);
       this.events.emit('shop-update', data);
     };
+    network.onShopReadyUpdate = (data) => {
+      this.events.emit('shop-ready-update', data);
+    };
 
     // Host: handle player reconnection
     network.onPlayerReconnected = (peerId, name) => {
@@ -315,6 +324,7 @@ export class GameScene extends Phaser.Scene {
       network.onShowShop = null;
       network.onShopClosed = null;
       network.onShopUpdate = null;
+      network.onShopReadyUpdate = null;
       network.onPlayerReconnected = null;
     });
   }
@@ -354,9 +364,13 @@ export class GameScene extends Phaser.Scene {
         data.players.forEach((p) => {
           if (!this.playerSpellData.has(p.peerId)) {
             this.playerSpellData.set(p.peerId, {
-              spells: ['fireball'],
-              activeSlot: 0,
+              slots: { fixed: 'fireball', bread_butter: null, tricky: null, power: null },
+              activeSlot: 'fixed',
               spellUpgrades: { fireball: createBaseSpellStats('fireball') },
+              spellTiers: { fireball: 0 },
+              blinkId: 'default_blink',
+              blinkStats: createBaseBlinkStats('default_blink'),
+              blinkTier: 0,
               globalUpgrades: createBaseGlobalUpgrades(),
               purchasedUpgrades: [],
             });
@@ -419,13 +433,17 @@ export class GameScene extends Phaser.Scene {
         selfKnockback: 0,
       });
 
-      // Arena mode spell data
+      // Arena mode spell data (category-based slots)
       this.playerSpellData.set(p.peerId, {
-        spells: ['fireball'],
-        activeSlot: 0,
+        slots: { fixed: 'fireball', bread_butter: null, tricky: null, power: null },
+        activeSlot: 'fixed',
         spellUpgrades: { fireball: createBaseSpellStats('fireball') },
+        spellTiers: { fireball: 0 },
+        blinkId: 'default_blink',
+        blinkStats: createBaseBlinkStats('default_blink'),
+        blinkTier: 0,
         globalUpgrades: createBaseGlobalUpgrades(),
-        purchasedUpgrades: [], // track upgrade IDs bought
+        purchasedUpgrades: [],
       });
 
       if (p.peerId.startsWith('bot-')) {
@@ -467,37 +485,70 @@ export class GameScene extends Phaser.Scene {
 
   _startShopPhase(winnerId) {
     this.shopOpen = true;
+    this._shopReadyPlayers = new Set();
+    this._shopStartTime = Date.now();
+    this._shopDuration = 30000; // 30s
 
     // Award gold
     this.goldManager.awardRoundGold(winnerId);
 
-    // Bots auto-buy in test mode
+    // Bots auto-ready in test mode
     if (this.testMode) {
       for (const botId of this.botIds) {
         this._botShopBuy(botId);
+        this._shopReadyPlayers.add(botId);
       }
     }
 
-    // Emit shop event locally
-    this.events.emit('show-shop', {
+    const shopData = {
       gold: this.goldManager.serialize(),
       playerSpellData: this._serializeAllSpellData(),
-    });
+      shopDuration: this._shopDuration,
+    };
+
+    // Emit shop event locally
+    this.events.emit('show-shop', shopData);
 
     // Tell clients to open shop
     if (!this.testMode) {
-      network.broadcastToClients({
-        type: 'show-shop',
-        gold: this.goldManager.serialize(),
-        playerSpellData: this._serializeAllSpellData(),
-      });
+      network.broadcastToClients({ type: 'show-shop', ...shopData });
     }
 
     // 30s shop timer
-    this._shopTimer = this.time.delayedCall(30000, () => {
+    this._shopTimer = this.time.delayedCall(this._shopDuration, () => {
       this._closeShop();
     });
     this._pendingTimers.push(this._shopTimer);
+  }
+
+  _handleShopReady(peerId) {
+    if (!this._shopReadyPlayers) return;
+    this._shopReadyPlayers.add(peerId);
+
+    // Broadcast ready status
+    const humanCount = this.playerInfo.filter((p) => !p.peerId.startsWith('bot-')).length;
+    const readyHumans = this.playerInfo.filter((p) => !p.peerId.startsWith('bot-') && this._shopReadyPlayers.has(p.peerId)).length;
+
+    this.events.emit('shop-ready-update', { ready: readyHumans, total: humanCount });
+    if (!this.testMode) {
+      network.broadcastToClients({ type: 'shop-ready-update', ready: readyHumans, total: humanCount });
+    }
+
+    // Check if all human players are ready
+    const allReady = this.playerInfo.every((p) =>
+      p.peerId.startsWith('bot-') || this._shopReadyPlayers.has(p.peerId)
+    );
+    if (allReady) {
+      this._closeShop();
+    }
+  }
+
+  submitShopReady() {
+    if (network.isHost) {
+      this._handleShopReady(this.localPlayerId);
+    } else {
+      network.sendInput({ type: 'input', action: 'shop-ready' });
+    }
   }
 
   _closeShop() {
@@ -528,57 +579,77 @@ export class GameScene extends Phaser.Scene {
     if (!def) return;
     const data = this.playerSpellData.get(peerId);
     if (!data) return;
+    const category = def.category;
+    if (category === 'fixed') return;
 
-    // Already own it or slots full
-    if (data.spells.includes(spellId)) return;
-    if (data.spells.length >= MAX_SPELL_SLOTS) return;
-
-    // Check gold
     if (!this.goldManager.spend(peerId, def.shopPrice)) return;
 
-    // Add spell
-    data.spells.push(spellId);
-    data.spellUpgrades[spellId] = createBaseSpellStats(spellId);
+    // Remove old spell data if replacing
+    const oldSpell = data.slots[category];
+    if (oldSpell) {
+      delete data.spellUpgrades[oldSpell];
+      delete data.spellTiers[oldSpell];
+    }
 
-    // Sync to all
+    // Set new spell in category slot
+    data.slots[category] = spellId;
+    data.spellUpgrades[spellId] = createBaseSpellStats(spellId);
+    data.spellTiers[spellId] = 0;
+
     this._broadcastShopState();
   }
 
-  _handleShopBuyUpgrade(peerId, upgradeId) {
+  _handleShopBuyTier(peerId, spellId) {
     const data = this.playerSpellData.get(peerId);
     if (!data) return;
 
-    // Check spell upgrades
-    for (const sid of data.spells) {
-      const spellDef = SPELL_DEFS[sid];
-      if (!spellDef) continue;
-      const upg = spellDef.upgrades.find((u) => u.id === upgradeId);
-      if (upg) {
-        // Check max stacks
-        if (upg.maxStacks) {
-          const count = data.purchasedUpgrades.filter((id) => id === upgradeId).length;
-          if (count >= upg.maxStacks) return;
-        }
-        if (!this.goldManager.spend(peerId, upg.price)) return;
-        upg.apply(data.spellUpgrades[sid]);
-        data.purchasedUpgrades.push(upgradeId);
-        this._broadcastShopState();
-        return;
-      }
+    const isBlink = !!BLINK_DEFS[spellId];
+    const def = SPELL_DEFS[spellId] || BLINK_DEFS[spellId];
+    if (!def || !def.tiers) return;
+
+    const currentTier = isBlink ? data.blinkTier : (data.spellTiers[spellId] || 0);
+    const nextTier = currentTier + 1;
+    if (nextTier > MAX_TIER) return;
+
+    const tierDef = def.tiers[nextTier];
+    if (!tierDef) return;
+    if (!this.goldManager.spend(peerId, tierDef.price)) return;
+
+    if (isBlink) {
+      tierDef.apply(data.blinkStats);
+      data.blinkTier = nextTier;
+    } else {
+      tierDef.apply(data.spellUpgrades[spellId]);
+      data.spellTiers[spellId] = nextTier;
     }
 
-    // Check global upgrades
+    data.purchasedUpgrades.push(`${spellId}_t${nextTier}`);
+    this._broadcastShopState();
+  }
+
+  _handleShopBuyBlink(peerId, blinkId) {
+    const def = BLINK_DEFS[blinkId];
+    if (!def || blinkId === 'default_blink') return;
+    const data = this.playerSpellData.get(peerId);
+    if (!data) return;
+    if (!this.goldManager.spend(peerId, def.shopPrice)) return;
+
+    data.blinkId = blinkId;
+    data.blinkStats = createBaseBlinkStats(blinkId);
+    data.blinkTier = 0;
+
+    this._broadcastShopState();
+  }
+
+  _handleShopBuyGlobal(peerId, upgradeId) {
+    const data = this.playerSpellData.get(peerId);
+    if (!data) return;
     const globalUpg = GLOBAL_UPGRADES.find((u) => u.id === upgradeId);
-    if (globalUpg) {
-      if (globalUpg.maxStacks) {
-        const count = data.purchasedUpgrades.filter((id) => id === upgradeId).length;
-        if (count >= globalUpg.maxStacks) return;
-      }
-      if (!this.goldManager.spend(peerId, globalUpg.price)) return;
-      globalUpg.apply(data.globalUpgrades);
-      data.purchasedUpgrades.push(upgradeId);
-      this._broadcastShopState();
-    }
+    if (!globalUpg) return;
+    if (!this.goldManager.spend(peerId, globalUpg.price)) return;
+    globalUpg.apply(data.globalUpgrades);
+    data.purchasedUpgrades.push(upgradeId);
+    this._broadcastShopState();
   }
 
   // Host processes local shop purchases
@@ -586,8 +657,16 @@ export class GameScene extends Phaser.Scene {
     this._handleShopBuySpell(this.localPlayerId, spellId);
   }
 
-  submitShopBuyUpgrade(upgradeId) {
-    this._handleShopBuyUpgrade(this.localPlayerId, upgradeId);
+  submitShopBuyTier(spellId) {
+    this._handleShopBuyTier(this.localPlayerId, spellId);
+  }
+
+  submitShopBuyBlink(blinkId) {
+    this._handleShopBuyBlink(this.localPlayerId, blinkId);
+  }
+
+  submitShopBuyGlobal(upgradeId) {
+    this._handleShopBuyGlobal(this.localPlayerId, upgradeId);
   }
 
   // Send shop purchase to host (client)
@@ -595,8 +674,16 @@ export class GameScene extends Phaser.Scene {
     network.sendInput({ type: 'input', action: 'shop-buy-spell', spellId });
   }
 
-  sendShopBuyUpgrade(upgradeId) {
-    network.sendInput({ type: 'input', action: 'shop-buy-upgrade', upgradeId });
+  sendShopBuyTier(spellId) {
+    network.sendInput({ type: 'input', action: 'shop-buy-tier', spellId });
+  }
+
+  sendShopBuyBlink(blinkId) {
+    network.sendInput({ type: 'input', action: 'shop-buy-blink', blinkId });
+  }
+
+  sendShopBuyGlobal(upgradeId) {
+    network.sendInput({ type: 'input', action: 'shop-buy-global', upgradeId });
   }
 
   _broadcastShopState() {
@@ -615,9 +702,13 @@ export class GameScene extends Phaser.Scene {
     const result = {};
     this.playerSpellData.forEach((data, pid) => {
       result[pid] = {
-        spells: [...data.spells],
+        slots: { ...data.slots },
         activeSlot: data.activeSlot,
         spellUpgrades: JSON.parse(JSON.stringify(data.spellUpgrades)),
+        spellTiers: { ...data.spellTiers },
+        blinkId: data.blinkId,
+        blinkStats: { ...data.blinkStats },
+        blinkTier: data.blinkTier,
         globalUpgrades: { ...data.globalUpgrades },
         purchasedUpgrades: [...data.purchasedUpgrades],
       };
@@ -626,13 +717,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   _applyAllSpellData(data) {
-    for (const [pid, spellData] of Object.entries(data)) {
+    for (const [pid, d] of Object.entries(data)) {
       this.playerSpellData.set(pid, {
-        spells: [...spellData.spells],
-        activeSlot: spellData.activeSlot,
-        spellUpgrades: JSON.parse(JSON.stringify(spellData.spellUpgrades)),
-        globalUpgrades: { ...spellData.globalUpgrades },
-        purchasedUpgrades: [...(spellData.purchasedUpgrades || [])],
+        slots: { ...d.slots },
+        activeSlot: d.activeSlot,
+        spellUpgrades: JSON.parse(JSON.stringify(d.spellUpgrades)),
+        spellTiers: { ...(d.spellTiers || {}) },
+        blinkId: d.blinkId || 'default_blink',
+        blinkStats: d.blinkStats ? { ...d.blinkStats } : createBaseBlinkStats(d.blinkId || 'default_blink'),
+        blinkTier: d.blinkTier || 0,
+        globalUpgrades: { ...d.globalUpgrades },
+        purchasedUpgrades: [...(d.purchasedUpgrades || [])],
       });
     }
   }
@@ -734,7 +829,7 @@ export class GameScene extends Phaser.Scene {
   _getActiveSpellId(playerId) {
     const data = this.playerSpellData.get(playerId);
     if (!data) return 'fireball';
-    return data.spells[data.activeSlot] || 'fireball';
+    return data.slots[data.activeSlot] || 'fireball';
   }
 
   _getSpellCooldown(playerId, spellId) {
@@ -750,21 +845,30 @@ export class GameScene extends Phaser.Scene {
     return Math.max(400, def.baseCooldown - reduction);
   }
 
+  _getBlinkCooldown(playerId) {
+    if (this.gameMode !== 'arena') return BLINK_COOLDOWN;
+    const data = this.playerSpellData.get(playerId);
+    if (!data) return 4000;
+    const def = BLINK_DEFS[data.blinkId] || BLINK_DEFS.default_blink;
+    const reduction = data.blinkStats ? data.blinkStats.cooldownReduction || 0 : 0;
+    return Math.max(800, def.baseCooldown - reduction);
+  }
+
   _getSpellCastTimeKey(playerId, spellId) {
     return `${playerId}-${spellId}`;
   }
 
   _switchSpell(slotIndex) {
     if (this.gameMode !== 'arena') return;
+    const category = SLOT_KEYS[slotIndex];
+    if (!category) return;
     const data = this.playerSpellData.get(this.localPlayerId);
-    if (!data || slotIndex >= data.spells.length) return;
-    data.activeSlot = slotIndex;
-    const spellId = data.spells[slotIndex];
-    const def = SPELL_DEFS[spellId];
+    if (!data || !data.slots[category]) return; // no spell in that slot
+    data.activeSlot = category;
     this.events.emit('spell-switched', {
-      activeSlot: slotIndex,
-      spellId,
-      spells: data.spells,
+      activeSlot: category,
+      spellId: data.slots[category],
+      slots: data.slots,
     });
   }
 
@@ -781,18 +885,65 @@ export class GameScene extends Phaser.Scene {
 
   _spawnProjectile(playerId, spellId, x, y, dirX, dirY) {
     const stats = this._getStatsForSpell(playerId, spellId);
+
+    // Color Spray: spawns multiple particles in a cone (special case)
+    if (spellId === 'color_spray') {
+      const count = stats.projectileCount || 5;
+      const cone = stats.coneAngle || 0.6;
+      const baseAngle = Math.atan2(dirY, dirX);
+      for (let i = 0; i < count; i++) {
+        const offset = count === 1 ? 0 : -cone / 2 + (cone / (count - 1)) * i;
+        const angle = baseAngle + offset;
+        this.fireballs.push(new ColorSprayParticle(this, x, y, Math.cos(angle), Math.sin(angle), playerId, stats));
+      }
+      const castKey = this._getSpellCastTimeKey(playerId, spellId);
+      this.spellCastTimes.set(castKey, Date.now());
+      this.playerFireballTimes.set(playerId, Date.now());
+      return;
+    }
+
+    // Vortex Wall: placed in front of caster (special case)
+    if (spellId === 'vortex_wall') {
+      const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+      const nx = dirX / len;
+      const ny = dirY / len;
+      const placeX = x + nx * 60;
+      const placeY = y + ny * 60;
+      this.fireballs.push(new VortexWall(this, placeX, placeY, nx, ny, playerId, stats));
+      const castKey = this._getSpellCastTimeKey(playerId, spellId);
+      this.spellCastTimes.set(castKey, Date.now());
+      this.playerFireballTimes.set(playerId, Date.now());
+      return;
+    }
+
+    // Mirror Image: spawns a decoy (special case)
+    if (spellId === 'mirror_image') {
+      // Pass caster color index
+      const playerIdx = this.playerInfo.findIndex((p) => p.peerId === playerId);
+      const enrichedStats = { ...stats, _colorIndex: playerIdx >= 0 ? playerIdx : 0 };
+      this.fireballs.push(new MirrorImage(this, x, y, dirX, dirY, playerId, enrichedStats));
+      const castKey = this._getSpellCastTimeKey(playerId, spellId);
+      this.spellCastTimes.set(castKey, Date.now());
+      this.playerFireballTimes.set(playerId, Date.now());
+      return;
+    }
+
     const count = stats.multishot || 1;
 
     const spawnOne = (fdx, fdy) => {
       switch (spellId) {
-        case 'ice_shard':
-          return new IceShard(this, x, y, fdx, fdy, playerId, stats);
         case 'lightning_bolt':
           return new LightningBolt(this, x, y, fdx, fdy, playerId, stats);
         case 'meteor':
           return new Meteor(this, x, y, fdx, fdy, playerId, stats);
         case 'gravity_sphere':
           return new GravitySphere(this, x, y, fdx, fdy, playerId, stats);
+        case 'homing_missile':
+          return new HomingMissile(this, x, y, fdx, fdy, playerId, stats);
+        case 'ricochet':
+          return new Ricochet(this, x, y, fdx, fdy, playerId, stats);
+        case 'tether':
+          return new Tether(this, x, y, fdx, fdy, playerId, stats);
         case 'fireball':
         default:
           return new Fireball(this, x, y, fdx, fdy, playerId, stats);
@@ -900,7 +1051,8 @@ export class GameScene extends Phaser.Scene {
     if (!this.gameStarted || this.roundOver || this.countdownActive) return;
 
     const now = Date.now();
-    if (now - this.lastBlinkTime < BLINK_COOLDOWN) return;
+    const blinkCd = this._getBlinkCooldown(this.localPlayerId);
+    if (now - this.lastBlinkTime < blinkCd) return;
 
     const wizard = this.wizards.get(this.localPlayerId);
     if (!wizard || !wizard.alive) return;
@@ -931,18 +1083,37 @@ export class GameScene extends Phaser.Scene {
     const wizard = this.wizards.get(playerId);
     if (!wizard || !wizard.alive) return;
 
-    let blinkDist, blinkKB;
+    // Arena mode: dispatch to variant
     if (this.gameMode === 'arena') {
       const spellData = this.playerSpellData.get(playerId);
-      const globals = spellData ? spellData.globalUpgrades : {};
-      blinkDist = globals.blinkDistance || BLINK_DISTANCE;
-      blinkKB = globals.blinkKnockback || 0;
-    } else {
-      const upgrades = this.playerUpgrades.get(playerId) || {};
-      blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
-      blinkKB = upgrades.blinkKnockback || 0;
+      const blinkId = spellData ? spellData.blinkId : 'default_blink';
+      const bStats = spellData ? spellData.blinkStats : {};
+
+      switch (blinkId) {
+        case 'rush':
+          this._executeRush(playerId, dirX, dirY, bStats);
+          return;
+        case 'swap':
+          this._executeSwap(playerId, dirX, dirY, bStats);
+          return;
+        case 'extended_blink':
+          this._executeDefaultBlink(wizard, dirX, dirY, bStats.blinkDistance || 180, 0);
+          return;
+        default:
+          this._executeDefaultBlink(wizard, dirX, dirY, bStats.blinkDistance || BLINK_DISTANCE, 0);
+          return;
+      }
     }
 
+    // Roguelike mode: standard blink
+    const upgrades = this.playerUpgrades.get(playerId) || {};
+    const blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+    const blinkKB = upgrades.blinkKnockback || 0;
+    this._executeDefaultBlink(wizard, dirX, dirY, blinkDist, blinkKB);
+  }
+
+  _executeDefaultBlink(wizard, dirX, dirY, blinkDist, blinkKB) {
+    const playerId = wizard.playerId;
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
     const nx = dirX / len;
     const ny = dirY / len;
@@ -950,66 +1121,120 @@ export class GameScene extends Phaser.Scene {
     const oldX = wizard.x;
     const oldY = wizard.y;
 
-    // Teleport
     wizard.x += nx * blinkDist;
     wizard.y += ny * blinkDist;
 
-    // Knockback persists through blink — wizard keeps their momentum
-
-    // Constrain to wall
     this.arena.constrainToWall(wizard);
     this.playerBlinkTimes.set(playerId, Date.now());
 
-    // Blink knockback — push nearby enemies away from origin
-    const shockwaveRange = 140;
+    // Blink knockback shockwave
     if (blinkKB > 0) {
+      const shockwaveRange = 140;
       this.wizards.forEach((other) => {
         if (other.playerId === playerId || !other.alive) return;
         const dx = other.x - oldX;
         const dy = other.y - oldY;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
         if (dist < shockwaveRange) {
-          const pushNx = dx / dist;
-          const pushNy = dy / dist;
           const force = blinkKB * (1 - dist / shockwaveRange);
-          other.applyKnockback(pushNx * force, pushNy * force);
+          other.applyKnockback((dx / dist) * force, (dy / dist) * force);
         }
       });
 
-      // Visual shockwave at origin
       const shockwave = this.add.graphics();
       this._blinkFxList.push(shockwave);
       shockwave.lineStyle(3, 0x4fc3f7, 0.7);
       shockwave.strokeCircle(oldX, oldY, 10);
       this.tweens.add({
         targets: shockwave,
-        scaleX: 4, scaleY: 4, alpha: 0,
-        duration: 350,
+        scaleX: 4, scaleY: 4, alpha: 0, duration: 350,
         onComplete: () => { shockwave.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== shockwave); },
       });
     }
 
-    // Afterimage at old position
+    // Afterimage
     const fx = this.add.graphics();
     this._blinkFxList.push(fx);
     fx.fillStyle(0x4fc3f7, 0.5);
     fx.fillCircle(oldX, oldY, wizard.radius);
     this.tweens.add({
-      targets: fx,
-      alpha: 0,
-      duration: 300,
+      targets: fx, alpha: 0, duration: 300,
       onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); },
     });
 
     wizard.draw();
   }
 
+  _executeRush(playerId, dirX, dirY, blinkStats) {
+    const wizard = this.wizards.get(playerId);
+    if (!wizard || !wizard.alive) return;
+
+    const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+    const nx = dirX / len;
+    const ny = dirY / len;
+    const dashDist = blinkStats.dashDistance || 180;
+    const hitRadius = blinkStats.hitRadius || 25;
+    const kb = blinkStats.knockback || 500;
+
+    const oldX = wizard.x;
+    const oldY = wizard.y;
+    const hitPlayers = new Set();
+
+    // Discrete steps along dash path
+    const steps = 10;
+    const stepDist = dashDist / steps;
+    for (let i = 1; i <= steps; i++) {
+      wizard.x = oldX + nx * stepDist * i;
+      wizard.y = oldY + ny * stepDist * i;
+
+      this.wizards.forEach((other) => {
+        if (other.playerId === playerId || !other.alive || hitPlayers.has(other.playerId)) return;
+        const dx = other.x - wizard.x;
+        const dy = other.y - wizard.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < hitRadius + other.radius) {
+          hitPlayers.add(other.playerId);
+          const pushLen = dist > 0 ? dist : 1;
+          other.applyKnockback((dx / pushLen) * kb, (dy / pushLen) * kb);
+        }
+      });
+    }
+
+    this.arena.constrainToWall(wizard);
+    this.playerBlinkTimes.set(playerId, Date.now());
+
+    // Afterimage trail
+    for (let i = 0; i < 4; i++) {
+      const t = i / 4;
+      const fx = this.add.graphics();
+      this._blinkFxList.push(fx);
+      fx.fillStyle(0xff8844, 0.3 - t * 0.1);
+      fx.fillCircle(oldX + (wizard.x - oldX) * t, oldY + (wizard.y - oldY) * t, wizard.radius);
+      this.tweens.add({
+        targets: fx, alpha: 0, duration: 300,
+        onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); },
+      });
+    }
+
+    wizard.draw();
+  }
+
+  _executeSwap(playerId, dirX, dirY, blinkStats) {
+    // Swap fires a projectile — spawn it into the fireballs array
+    const wizard = this.wizards.get(playerId);
+    if (!wizard || !wizard.alive) return;
+
+    const proj = new SwapProjectile(this, wizard.x, wizard.y, dirX, dirY, playerId, blinkStats);
+    this.fireballs.push(proj);
+    this.playerBlinkTimes.set(playerId, Date.now());
+  }
+
   _executeLocalBlink(wizard, dirX, dirY) {
     let blinkDist;
     if (this.gameMode === 'arena') {
       const spellData = this.playerSpellData.get(wizard.playerId);
-      const globals = spellData ? spellData.globalUpgrades : {};
-      blinkDist = globals.blinkDistance || BLINK_DISTANCE;
+      const bStats = spellData ? spellData.blinkStats : {};
+      blinkDist = bStats.blinkDistance || BLINK_DISTANCE;
     } else {
       const upgrades = this.playerUpgrades.get(wizard.playerId) || {};
       blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
@@ -1061,8 +1286,20 @@ export class GameScene extends Phaser.Scene {
       this._handleShopBuySpell(peerId, data.spellId);
       return;
     }
-    if (data.action === 'shop-buy-upgrade') {
-      this._handleShopBuyUpgrade(peerId, data.upgradeId);
+    if (data.action === 'shop-buy-tier') {
+      this._handleShopBuyTier(peerId, data.spellId);
+      return;
+    }
+    if (data.action === 'shop-buy-blink') {
+      this._handleShopBuyBlink(peerId, data.blinkId);
+      return;
+    }
+    if (data.action === 'shop-buy-global') {
+      this._handleShopBuyGlobal(peerId, data.upgradeId);
+      return;
+    }
+    if (data.action === 'shop-ready') {
+      this._handleShopReady(peerId);
       return;
     }
 
@@ -1154,7 +1391,8 @@ export class GameScene extends Phaser.Scene {
       const fbElapsed = now - this.lastFireballTime;
       const localCd = this._getFireballCooldown(this.localPlayerId);
       const fbPct = this.lastFireballTime === 0 ? 0 : Math.max(0, 1 - fbElapsed / localCd);
-      const blinkReady = this.lastBlinkTime === 0 || (now - this.lastBlinkTime) >= BLINK_COOLDOWN;
+      const localBlinkCd = this._getBlinkCooldown(this.localPlayerId);
+      const blinkReady = this.lastBlinkTime === 0 || (now - this.lastBlinkTime) >= localBlinkCd;
       localWizard.setCooldowns(fbPct, blinkReady);
     }
 
@@ -1166,33 +1404,32 @@ export class GameScene extends Phaser.Scene {
     if (!data) return;
     const gold = this.goldManager.getGold(botId);
 
-    // Try to buy a random spell if can afford and has slots
-    if (data.spells.length < MAX_SPELL_SLOTS) {
-      const buyable = SPELL_IDS.filter((id) => !data.spells.includes(id) && SPELL_DEFS[id].shopPrice <= gold);
-      if (buyable.length > 0) {
-        const pick = buyable[Math.floor(Math.random() * buyable.length)];
-        this._handleShopBuySpell(botId, pick);
-        return;
-      }
-    }
-
-    // Try to buy a random upgrade for an owned spell
-    const allUpgrades = [];
-    for (const sid of data.spells) {
-      const def = SPELL_DEFS[sid];
-      if (!def) continue;
-      for (const upg of def.upgrades) {
-        if (upg.price <= this.goldManager.getGold(botId)) {
-          const count = data.purchasedUpgrades.filter((id) => id === upg.id).length;
-          if (!upg.maxStacks || count < upg.maxStacks) {
-            allUpgrades.push(upg.id);
-          }
+    // Try to fill empty category slots
+    for (const cat of ['bread_butter', 'tricky', 'power']) {
+      if (!data.slots[cat]) {
+        const options = SPELLS_BY_CATEGORY[cat];
+        const affordable = options.filter((id) => SPELL_DEFS[id].shopPrice <= gold);
+        if (affordable.length > 0) {
+          const pick = affordable[Math.floor(Math.random() * affordable.length)];
+          this._handleShopBuySpell(botId, pick);
+          return;
         }
       }
     }
-    if (allUpgrades.length > 0) {
-      const pick = allUpgrades[Math.floor(Math.random() * allUpgrades.length)];
-      this._handleShopBuyUpgrade(botId, pick);
+
+    // Try to buy a tier upgrade for an owned spell
+    const owned = Object.values(data.slots).filter(Boolean);
+    const upgradeable = owned.filter((sid) => {
+      const def = SPELL_DEFS[sid];
+      if (!def || !def.tiers) return false;
+      const tier = data.spellTiers[sid] || 0;
+      if (tier >= MAX_TIER) return false;
+      const nextTier = def.tiers[tier + 1];
+      return nextTier && nextTier.price <= this.goldManager.getGold(botId);
+    });
+    if (upgradeable.length > 0) {
+      const pick = upgradeable[Math.floor(Math.random() * upgradeable.length)];
+      this._handleShopBuyTier(botId, pick);
     }
   }
 
@@ -1331,7 +1568,8 @@ export class GameScene extends Phaser.Scene {
 
       const lastBlink = this.playerBlinkTimes.get(wizard.playerId) || 0;
       const blinkElapsed = now - lastBlink;
-      const blinkReady = lastBlink === 0 || blinkElapsed >= BLINK_COOLDOWN;
+      const blinkCdForPlayer = this._getBlinkCooldown(wizard.playerId);
+      const blinkReady = lastBlink === 0 || blinkElapsed >= blinkCdForPlayer;
 
       wizard.cooldownRingColor = ringColor;
       wizard.setCooldowns(fbPct, blinkReady);
@@ -1340,18 +1578,51 @@ export class GameScene extends Phaser.Scene {
     // Wizard-to-wizard collision (knockback transfer)
     this._checkWizardCollisions();
 
+    // Vortex Wall deflection pass (before normal collisions)
+    const vortexWalls = this.fireballs.filter((fb) => fb.spellId === 'vortex_wall' && fb.alive);
+    if (vortexWalls.length > 0) {
+      this.fireballs.forEach((fb) => {
+        if (!fb.alive || fb.spellId === 'vortex_wall' || fb.spellId === 'mirror_image') return;
+        for (const wall of vortexWalls) {
+          if (wall.checkDeflect(fb)) break;
+        }
+      });
+    }
+
     this.fireballs.forEach((fb) => {
       fb.update(delta);
+
+      // HomingMissile: set targets each frame
+      if (fb.spellId === 'homing_missile' && fb.alive && fb.setTargets) {
+        fb.setTargets(this.wizards);
+      }
 
       // GravitySphere: apply pull during well phase
       if (fb.spellId === 'gravity_sphere' && fb.phase === 'well' && fb.alive) {
         fb.applyPull(this.wizards, delta);
       }
 
+      // Tether: apply pull during tethered phase
+      if (fb.spellId === 'tether' && fb.phase === 'tethered' && fb.alive) {
+        const caster = this.wizards.get(fb.ownerPlayerId);
+        const target = this.wizards.get(fb.targetPlayerId);
+        if (caster && target && caster.alive && target.alive) {
+          fb.applyTetherPull(caster, target, delta);
+        } else {
+          fb.alive = false;
+        }
+      }
+
+      // Mirror Image: check if pending pulse on expiry
+      if (fb.spellId === 'mirror_image' && fb._pendingPulse && !fb.alive) {
+        fb.applyPulse(this.wizards);
+        fb._pendingPulse = false;
+      }
+
       this.wizards.forEach((wizard) => {
+        const wasAlive = wizard.alive;
         const dealt = fb.checkHit(wizard);
         if (dealt === -1 && fb.spellId === 'meteor') {
-          // Meteor triggered explosion — apply AoE damage
           const hits = fb.applyExplosionDamage(this.wizards);
           hits.forEach(({ wizard: w, dealt: d }) => {
             if (d > 0 && fb.lifesteal > 0) {
@@ -1360,14 +1631,41 @@ export class GameScene extends Phaser.Scene {
                 owner.health = Math.min(owner.maxHealth, owner.health + d * fb.lifesteal);
               }
             }
+            // Kill credit
+            if (wasAlive && !w.alive && this.gameMode === 'arena') {
+              this.goldManager.awardKillGold(fb.ownerPlayerId);
+            }
           });
-        } else if (dealt > 0 && fb.lifesteal > 0) {
-          const owner = this.wizards.get(fb.ownerPlayerId);
-          if (owner && owner.alive) {
-            owner.health = Math.min(owner.maxHealth, owner.health + dealt * fb.lifesteal);
+        } else if (dealt === -3 && fb.spellId === 'mirror_image') {
+          fb.applyPulse(this.wizards);
+          fb._pendingPulse = false;
+        } else if (dealt === -4 && fb.spellId === 'swap_projectile') {
+          const caster = this.wizards.get(fb.ownerPlayerId);
+          const target = this.wizards.get(fb.targetPlayerId);
+          if (caster && target) {
+            const tmpX = caster.x, tmpY = caster.y;
+            caster.x = target.x; caster.y = target.y;
+            target.x = tmpX; target.y = tmpY;
+            caster.draw(); target.draw();
+          }
+        } else if (dealt > 0) {
+          if (fb.lifesteal > 0) {
+            const owner = this.wizards.get(fb.ownerPlayerId);
+            if (owner && owner.alive) {
+              owner.health = Math.min(owner.maxHealth, owner.health + dealt * fb.lifesteal);
+            }
+          }
+          // Kill credit
+          if (wasAlive && !wizard.alive && this.gameMode === 'arena') {
+            this.goldManager.awardKillGold(fb.ownerPlayerId);
           }
         }
       });
+
+      // Ricochet: redirect after hit
+      if (fb.spellId === 'ricochet' && fb.needsRedirect) {
+        fb.redirectToNearest(this.wizards);
+      }
     });
 
     // Fireball-vs-fireball collision (different owners only, one destroys the other)
@@ -1624,12 +1922,6 @@ export class GameScene extends Phaser.Scene {
   _createProjectileFromState(fbs) {
     const spellId = fbs.spellId || 'fireball';
     switch (spellId) {
-      case 'ice_shard': {
-        const p = new IceShard(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
-        p.velX = fbs.velX || 0;
-        p.velY = fbs.velY || 0;
-        return p;
-      }
       case 'lightning_bolt': {
         const p = new LightningBolt(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
         p.velX = fbs.velX || 0;
@@ -1649,6 +1941,54 @@ export class GameScene extends Phaser.Scene {
         p.velX = fbs.velX || 0;
         p.velY = fbs.velY || 0;
         if (fbs.phase === 'well') { p.phase = 'well'; p.wellStartTime = fbs.wellStartTime; p.velX = 0; p.velY = 0; }
+        return p;
+      }
+      case 'homing_missile': {
+        const p = new HomingMissile(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        if (fbs.angle !== undefined) p.angle = fbs.angle;
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        return p;
+      }
+      case 'ricochet': {
+        const p = new Ricochet(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        if (fbs.bouncesRemaining !== undefined) p.bouncesRemaining = fbs.bouncesRemaining;
+        if (fbs.lastHitId) p.lastHitId = fbs.lastHitId;
+        return p;
+      }
+      case 'color_spray': {
+        const p = new ColorSprayParticle(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        return p;
+      }
+      case 'tether': {
+        const p = new Tether(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        if (fbs.phase === 'tethered') {
+          p.phase = 'tethered';
+          p.targetPlayerId = fbs.targetPlayerId;
+          p.tetherStartTime = fbs.tetherStartTime;
+        }
+        return p;
+      }
+      case 'mirror_image': {
+        const p = new MirrorImage(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
+        return p;
+      }
+      case 'vortex_wall': {
+        const p = new VortexWall(this, fbs.x, fbs.y, fbs.normalX || 1, fbs.normalY || 0, fbs.ownerPlayerId, fbs);
+        return p;
+      }
+      case 'swap_projectile': {
+        const p = new SwapProjectile(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        p.velX = fbs.velX || 0;
+        p.velY = fbs.velY || 0;
         return p;
       }
       case 'fireball':

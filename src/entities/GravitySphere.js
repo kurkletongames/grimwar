@@ -1,4 +1,5 @@
 const TRAVEL_LIFETIME = 3000;
+const WELL_DPS_PCT = 0.04; // 4% max HP per second drain while in pull radius
 
 export class GravitySphere {
   constructor(scene, x, y, dirX, dirY, ownerPlayerId, stats = {}) {
@@ -78,6 +79,10 @@ export class GravitySphere {
         this.graphics.fillCircle(p.x, p.y, size);
       });
 
+      // AoE range indicator (faint circle showing pull radius)
+      this.graphics.lineStyle(1, 0x9944ff, 0.12);
+      this.graphics.strokeCircle(this.x, this.y, this.pullRadius);
+
       // Outer glow
       this.graphics.fillStyle(0x9944ff, 0.3);
       this.graphics.fillCircle(this.x, this.y, this.radius * 2);
@@ -92,20 +97,43 @@ export class GravitySphere {
     } else {
       // Well phase — pulsing gravity field
       const elapsed = Date.now() - this.wellStartTime;
-      const lifePct = 1 - elapsed / this.wellDuration;
-      const pulse = 0.8 + Math.sin(this.pulsePhase) * 0.2;
+      const lifePct = Math.max(0, 1 - elapsed / this.wellDuration);
+      const pulse = 0.85 + Math.sin(this.pulsePhase) * 0.15;
 
-      // Outer pull radius indicator
-      this.graphics.lineStyle(1.5, 0x9944ff, 0.2 * lifePct);
+      // Outer pull radius — the main AoE circle
+      this.graphics.fillStyle(0x6622cc, 0.1 * lifePct);
+      this.graphics.fillCircle(this.x, this.y, this.pullRadius * pulse);
+
+      // Outer ring
+      this.graphics.lineStyle(2, 0x9944ff, 0.35 * lifePct);
       this.graphics.strokeCircle(this.x, this.y, this.pullRadius * pulse);
 
-      // Inner ring
-      this.graphics.lineStyle(2, 0x9944ff, 0.4 * lifePct);
-      this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.5 * pulse);
+      // Mid ring
+      this.graphics.lineStyle(1.5, 0x9944ff, 0.25 * lifePct);
+      this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.6 * pulse);
 
-      // Gravity fill
-      this.graphics.fillStyle(0x6622cc, 0.15 * lifePct);
-      this.graphics.fillCircle(this.x, this.y, this.pullRadius * pulse);
+      // Inner ring
+      this.graphics.lineStyle(1, 0xcc88ff, 0.3 * lifePct);
+      this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.3 * pulse);
+
+      // Swirl lines (rotating inward spiral effect)
+      const numLines = 4;
+      for (let i = 0; i < numLines; i++) {
+        const angle = this.pulsePhase * 0.8 + (i / numLines) * Math.PI * 2;
+        const outerR = this.pullRadius * 0.8 * pulse;
+        const innerR = this.pullRadius * 0.2;
+        this.graphics.lineStyle(1, 0x9944ff, 0.2 * lifePct);
+        this.graphics.beginPath();
+        this.graphics.moveTo(
+          this.x + Math.cos(angle) * outerR,
+          this.y + Math.sin(angle) * outerR,
+        );
+        this.graphics.lineTo(
+          this.x + Math.cos(angle + 0.5) * innerR,
+          this.y + Math.sin(angle + 0.5) * innerR,
+        );
+        this.graphics.strokePath();
+      }
 
       // Core
       this.graphics.fillStyle(0x9944ff, 0.8 * lifePct);
@@ -119,7 +147,7 @@ export class GravitySphere {
 
   /**
    * During travel: triggers well on contact with enemy.
-   * During well: no direct hit damage (pull is applied by GameScene).
+   * During well: no direct hit damage (pull + drain is applied by applyPull).
    */
   checkHit(wizard) {
     if (!this.alive || !wizard.alive) return 0;
@@ -143,7 +171,7 @@ export class GravitySphere {
   }
 
   /**
-   * Apply gravitational pull to all enemies in range.
+   * Apply gravitational pull and HP drain to all enemies in range.
    * Called by GameScene each frame during well phase.
    */
   applyPull(wizards, delta) {
@@ -168,6 +196,10 @@ export class GravitySphere {
 
         wizard.knockbackVel.x += nx * pullForce;
         wizard.knockbackVel.y += ny * pullForce;
+
+        // HP drain while in the pull zone
+        const drain = wizard.maxHealth * WELL_DPS_PCT * dt;
+        wizard.takeDamage(drain);
       }
     });
   }

@@ -229,9 +229,18 @@ export class UIScene extends Phaser.Scene {
     });
 
     gameScene.events.on('shop-update', (data) => {
-      if (this.gameMode === 'arena' && this.shopContainer.visible) {
-        this._shopData = data;
-        this._showShop(data);
+      if (this.gameMode === 'arena') {
+        // Update local slot data from shop purchases
+        const localId = network.localPlayerId || gameScene.localPlayerId;
+        const sd = data.playerSpellData ? data.playerSpellData[localId] : null;
+        if (sd && sd.slots) {
+          this.currentSlots = sd.slots;
+          this._drawSpellSlots();
+        }
+        if (this.shopContainer.visible) {
+          this._shopData = data;
+          this._showShop(data);
+        }
       }
     });
 
@@ -690,6 +699,7 @@ export class UIScene extends Phaser.Scene {
 
   _drawSpellSlots() {
     this.spellSlotsContainer.removeAll(true);
+    this._slotCooldownGraphics = [];
     const slotSize = 44;
     const gap = 6;
     const totalW = MAX_SPELL_SLOTS * slotSize + (MAX_SPELL_SLOTS - 1) * gap;
@@ -718,6 +728,11 @@ export class UIScene extends Phaser.Scene {
         this.spellSlotsContainer.add(icon);
       }
 
+      // Cooldown overlay (drawn per-frame)
+      const cdGraphics = this.add.graphics();
+      this.spellSlotsContainer.add(cdGraphics);
+      this._slotCooldownGraphics.push({ graphics: cdGraphics, cx, cy: 0, size: slotSize, cat, spellId });
+
       // Key number label
       const keyText = this.add.text(cx - slotSize / 2 + 4, -slotSize / 2 + 2, `${i + 1}`, {
         fontSize: '9px', color: '#666',
@@ -729,6 +744,46 @@ export class UIScene extends Phaser.Scene {
         fontSize: '7px', color: '#555',
       }).setOrigin(0.5, 0);
       this.spellSlotsContainer.add(catLabel);
+    });
+  }
+
+  update() {
+    // Update spell slot cooldown overlays each frame
+    if (this.gameMode !== 'arena' || !this._slotCooldownGraphics) return;
+    const gameScene = this.scene.get('GameScene');
+    if (!gameScene || !gameScene.gameStarted) return;
+    const localId = gameScene.localPlayerId;
+    const now = Date.now();
+
+    this._slotCooldownGraphics.forEach(({ graphics, cx, cy, size, cat }) => {
+      graphics.clear();
+      const spellId = this.currentSlots[cat];
+      if (!spellId) return;
+
+      const castKey = gameScene._getSpellCastTimeKey(localId, spellId);
+      const lastCast = gameScene.spellCastTimes.get(castKey) || 0;
+      const cd = gameScene._getSpellCooldown(localId, spellId);
+      const elapsed = now - lastCast;
+      const pct = lastCast === 0 ? 0 : Math.max(0, 1 - elapsed / cd);
+
+      if (pct > 0) {
+        // Dark overlay
+        graphics.fillStyle(0x000000, 0.55);
+        graphics.fillRoundedRect(cx - size / 2 + 1, cy - size / 2 + 1, size - 2, size - 2, 5);
+
+        // Cooldown sweep arc (fills clockwise from top)
+        const readyPct = 1 - pct;
+        if (readyPct > 0 && readyPct < 1) {
+          const def = SPELL_DEFS[spellId];
+          const color = def ? def.color : 0xffffff;
+          graphics.lineStyle(2, color, 0.7);
+          graphics.beginPath();
+          const startAngle = -Math.PI / 2;
+          const endAngle = startAngle + readyPct * Math.PI * 2;
+          graphics.arc(cx, cy, size / 2 - 4, startAngle, endAngle, false);
+          graphics.strokePath();
+        }
+      }
     });
   }
 

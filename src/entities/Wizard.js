@@ -42,6 +42,15 @@ export class Wizard {
     // Slow effect (from Ice Shard)
     this.slowEffect = null; // { factor: 0.5, endTime: timestamp }
 
+    // Kill credit tracking
+    this.lastHitBy = null; // playerId of last player who damaged us
+
+    // Rush dash state
+    this.dashing = false;
+    this.dashDir = { x: 0, y: 0 };
+    this.dashSpeed = 0;
+    this.dashRemaining = 0;
+
     // Create wizard body (circle)
     this.graphics = scene.add.graphics();
     this.cooldownGraphics = scene.add.graphics();
@@ -223,12 +232,28 @@ export class Wizard {
       this.slowEffect = null;
     }
 
-    // WASD movement (reduced by slow effect)
-    const speedMult = this.slowEffect ? this.slowEffect.factor : 1;
-    if (this.inputDir.x !== 0 || this.inputDir.y !== 0) {
-      const len = Math.sqrt(this.inputDir.x ** 2 + this.inputDir.y ** 2) || 1;
-      moveX = (this.inputDir.x / len) * WIZARD_SPEED * speedMult * dt;
-      moveY = (this.inputDir.y / len) * WIZARD_SPEED * speedMult * dt;
+    // Rush dash movement (overrides WASD while active)
+    if (this.dashing) {
+      const dashMove = this.dashSpeed * dt;
+      if (dashMove >= this.dashRemaining) {
+        // Finish dash this frame
+        this.x += this.dashDir.x * this.dashRemaining;
+        this.y += this.dashDir.y * this.dashRemaining;
+        this.dashRemaining = 0;
+        this.dashing = false;
+      } else {
+        this.x += this.dashDir.x * dashMove;
+        this.y += this.dashDir.y * dashMove;
+        this.dashRemaining -= dashMove;
+      }
+    } else {
+      // WASD movement (reduced by slow effect)
+      const speedMult = this.slowEffect ? this.slowEffect.factor : 1;
+      if (this.inputDir.x !== 0 || this.inputDir.y !== 0) {
+        const len = Math.sqrt(this.inputDir.x ** 2 + this.inputDir.y ** 2) || 1;
+        moveX = (this.inputDir.x / len) * WIZARD_SPEED * speedMult * dt;
+        moveY = (this.inputDir.y / len) * WIZARD_SPEED * speedMult * dt;
+      }
     }
 
     // Apply knockback
@@ -256,6 +281,10 @@ export class Wizard {
       health: this.health,
       alive: this.alive,
       knockbackVel: { ...this.knockbackVel },
+      dashing: this.dashing,
+      dashDir: this.dashing ? { ...this.dashDir } : null,
+      dashSpeed: this.dashing ? this.dashSpeed : 0,
+      dashRemaining: this.dashing ? this.dashRemaining : 0,
     };
   }
 
@@ -278,6 +307,16 @@ export class Wizard {
     this.health = state.health;
     this.alive = state.alive;
     this.knockbackVel = { ...state.knockbackVel };
+
+    // Sync dash state
+    if (state.dashing && !this.dashing) {
+      this.dashing = true;
+      this.dashDir = state.dashDir ? { ...state.dashDir } : { x: 0, y: 0 };
+      this.dashSpeed = state.dashSpeed || 0;
+      this.dashRemaining = state.dashRemaining || 0;
+    } else if (!state.dashing) {
+      this.dashing = false;
+    }
     this.draw();
   }
 

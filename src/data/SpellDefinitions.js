@@ -118,15 +118,15 @@ export const SPELL_DEFS = {
     baseCooldown: 5000,
     baseStats: {
       speed: 350, damage: 5, radius: 5,
-      tetherDuration: 2500, pullForce: 80, tetherRange: 250, cooldownReduction: 0,
+      tetherDuration: 4000, pullForce: 100, tetherRange: 280, cooldownReduction: 0,
     },
     tiers: {
-      1: { title: 'Bind', desc: 'Duration +500ms, Pull +20', price: 150,
-           apply: (s) => { s.tetherDuration += 500; s.pullForce += 20; } },
-      2: { title: 'Iron Chain', desc: 'Duration +500ms, Damage +5, Range +50', price: 225,
-           apply: (s) => { s.tetherDuration += 500; s.damage += 5; s.tetherRange += 50; } },
-      3: { title: 'Soul Link', desc: 'Pull +30, Damage +8, CD -600ms', price: 300,
-           apply: (s) => { s.pullForce += 30; s.damage += 8; s.cooldownReduction += 600; } },
+      1: { title: 'Bind', desc: 'Duration +1s, Pull +25', price: 150,
+           apply: (s) => { s.tetherDuration += 1000; s.pullForce += 25; } },
+      2: { title: 'Iron Chain', desc: 'Duration +1s, Range +50, Pull +25', price: 225,
+           apply: (s) => { s.tetherDuration += 1000; s.tetherRange += 50; s.pullForce += 25; } },
+      3: { title: 'Tractor Beam', desc: 'Pull +40, Range +50, CD -800ms', price: 300,
+           apply: (s) => { s.pullForce += 40; s.tetherRange += 50; s.cooldownReduction += 800; } },
     },
   },
 

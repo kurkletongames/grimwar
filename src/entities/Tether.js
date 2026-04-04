@@ -13,13 +13,14 @@ export class Tether {
     this.tetherStartTime = 0;
 
     const speed = stats.speed || 350;
-    this.damage = stats.damage || 5;
+    this.damage = 0; // no damage
     this.radius = stats.radius || 5;
-    this.tetherDuration = stats.tetherDuration || 2500;
+    this.tetherDuration = stats.tetherDuration || 4000; // longer default
     this.pullForce = stats.pullForce || 80;
     this.tetherRange = stats.tetherRange || 250;
-    this.lifesteal = stats.lifesteal || 0;
+    this.lifesteal = 0;
     this.speed = speed;
+    this.knockback = 0;
 
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
     this.velX = (dirX / len) * speed;
@@ -74,36 +75,37 @@ export class Tether {
       this.graphics.fillCircle(this.x, this.y, this.radius);
     } else {
       // Tethered — draw beam between caster and target
-      // Positions are updated by GameScene via setCasterTarget
       if (this._casterPos && this._targetPos) {
         const elapsed = Date.now() - this.tetherStartTime;
-        const lifePct = 1 - elapsed / this.tetherDuration;
-        const alpha = Math.max(0.2, lifePct);
+        const lifePct = Math.max(0, 1 - elapsed / this.tetherDuration);
+        const alpha = Math.max(0.3, lifePct);
 
-        // Chain segments
-        const segs = 8;
-        const dx = this._targetPos.x - this._casterPos.x;
-        const dy = this._targetPos.y - this._casterPos.y;
+        const beamDx = this._targetPos.x - this._casterPos.x;
+        const beamDy = this._targetPos.y - this._casterPos.y;
+        const beamLen = Math.sqrt(beamDx * beamDx + beamDy * beamDy) || 1;
 
-        this.graphics.lineStyle(2, 0xff8844, alpha * 0.8);
+        // Main beam line
+        this.graphics.lineStyle(3, 0xff8844, alpha * 0.8);
         this.graphics.beginPath();
-        for (let i = 0; i <= segs; i++) {
-          const t = i / segs;
-          const px = this._casterPos.x + dx * t;
-          const py = this._casterPos.y + dy * t;
-          // Add zigzag
-          const offset = (i % 2 === 0 ? 1 : -1) * 4 * (1 - Math.abs(t - 0.5) * 2);
-          const nx = -dy / (Math.sqrt(dx * dx + dy * dy) || 1);
-          const ny = dx / (Math.sqrt(dx * dx + dy * dy) || 1);
-          if (i === 0) this.graphics.moveTo(px + nx * offset, py + ny * offset);
-          else this.graphics.lineTo(px + nx * offset, py + ny * offset);
-        }
+        this.graphics.moveTo(this._casterPos.x, this._casterPos.y);
+        this.graphics.lineTo(this._targetPos.x, this._targetPos.y);
         this.graphics.strokePath();
+
+        // Animated energy pulses along beam (toward target)
+        const pulseTime = (Date.now() % 600) / 600; // 0-1 cycling
+        for (let p = 0; p < 3; p++) {
+          const t = ((pulseTime + p / 3) % 1);
+          const px = this._casterPos.x + beamDx * t;
+          const py = this._casterPos.y + beamDy * t;
+          this.graphics.fillStyle(0xffaa44, alpha * 0.6);
+          this.graphics.fillCircle(px, py, 3);
+        }
 
         // Glow at endpoints
         this.graphics.fillStyle(0xff8844, alpha * 0.4);
         this.graphics.fillCircle(this._casterPos.x, this._casterPos.y, 8);
-        this.graphics.fillCircle(this._targetPos.x, this._targetPos.y, 8);
+        this.graphics.fillStyle(0xff4422, alpha * 0.5);
+        this.graphics.fillCircle(this._targetPos.x, this._targetPos.y, 10);
       }
     }
   }
@@ -111,34 +113,39 @@ export class Tether {
   setCasterTarget(casterPos, targetPos) {
     this._casterPos = casterPos;
     this._targetPos = targetPos;
-    // Update our position to midpoint for serialization
+    // Update position to midpoint for serialization
     this.x = (casterPos.x + targetPos.x) / 2;
     this.y = (casterPos.y + targetPos.y) / 2;
   }
 
+  /**
+   * Tractor beam: pull target toward caster.
+   * Pull is STRONGER the further the target is from the caster.
+   * Allows rotation: only pulls along the radial direction.
+   */
   applyTetherPull(caster, target, delta) {
     if (this.phase !== 'tethered' || !this.alive) return;
     const dt = delta / 1000;
 
-    const dx = target.x - caster.x;
-    const dy = target.y - caster.y;
+    const dx = caster.x - target.x;
+    const dy = caster.y - target.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
     // Break if too far
-    if (dist > this.tetherRange * 2) {
+    if (dist > this.tetherRange * 2.5) {
       this.alive = false;
       return;
     }
 
+    // Pull strength scales UP with distance (stronger when further away)
+    const distFactor = Math.min(2, dist / 100); // 1x at 100px, 2x at 200px+
+    const pullMag = this.pullForce * distFactor * dt;
+
+    // Pull only along radial direction (toward caster) — preserves tangential velocity for rotation
     const nx = dx / dist;
     const ny = dy / dist;
-    const force = this.pullForce * dt;
-
-    // Pull both toward each other
-    caster.knockbackVel.x += nx * force;
-    caster.knockbackVel.y += ny * force;
-    target.knockbackVel.x -= nx * force;
-    target.knockbackVel.y -= ny * force;
+    target.knockbackVel.x += nx * pullMag;
+    target.knockbackVel.y += ny * pullMag;
 
     this.setCasterTarget(
       { x: caster.x, y: caster.y },
@@ -156,18 +163,13 @@ export class Tether {
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     if (dist < this.radius * 2 + wizard.radius) {
-      const prevHealth = wizard.health;
-      wizard.takeDamage(this.damage);
-      const dealt = prevHealth - wizard.health;
-
-      // Transition to tethered phase
+      // No damage — just link
       this.phase = 'tethered';
       this.targetPlayerId = wizard.playerId;
       this.tetherStartTime = Date.now();
       this.velX = 0;
       this.velY = 0;
-
-      return dealt;
+      return 0;
     }
     return 0;
   }

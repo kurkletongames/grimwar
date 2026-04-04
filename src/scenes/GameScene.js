@@ -1173,50 +1173,19 @@ export class GameScene extends Phaser.Scene {
     const nx = dirX / len;
     const ny = dirY / len;
     const dashDist = blinkStats.dashDistance || 180;
-    const hitRadius = blinkStats.hitRadius || 25;
-    const kb = blinkStats.knockback || 500;
+    const dashSpeed = 450; // pixels/sec — slow enough to react to
 
-    const oldX = wizard.x;
-    const oldY = wizard.y;
-    const hitPlayers = new Set();
+    // Start the animated dash
+    wizard.dashing = true;
+    wizard.dashDir = { x: nx, y: ny };
+    wizard.dashSpeed = dashSpeed;
+    wizard.dashRemaining = dashDist;
+    wizard._rushOwnerId = playerId;
+    wizard._rushKnockback = blinkStats.knockback || 500;
+    wizard._rushHitRadius = blinkStats.hitRadius || 25;
+    wizard._rushHitPlayers = new Set();
 
-    // Discrete steps along dash path
-    const steps = 10;
-    const stepDist = dashDist / steps;
-    for (let i = 1; i <= steps; i++) {
-      wizard.x = oldX + nx * stepDist * i;
-      wizard.y = oldY + ny * stepDist * i;
-
-      this.wizards.forEach((other) => {
-        if (other.playerId === playerId || !other.alive || hitPlayers.has(other.playerId)) return;
-        const dx = other.x - wizard.x;
-        const dy = other.y - wizard.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < hitRadius + other.radius) {
-          hitPlayers.add(other.playerId);
-          const pushLen = dist > 0 ? dist : 1;
-          other.applyKnockback((dx / pushLen) * kb, (dy / pushLen) * kb);
-        }
-      });
-    }
-
-    this.arena.constrainToWall(wizard);
     this.playerBlinkTimes.set(playerId, Date.now());
-
-    // Afterimage trail
-    for (let i = 0; i < 4; i++) {
-      const t = i / 4;
-      const fx = this.add.graphics();
-      this._blinkFxList.push(fx);
-      fx.fillStyle(0xff8844, 0.3 - t * 0.1);
-      fx.fillCircle(oldX + (wizard.x - oldX) * t, oldY + (wizard.y - oldY) * t, wizard.radius);
-      this.tweens.add({
-        targets: fx, alpha: 0, duration: 300,
-        onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); },
-      });
-    }
-
-    wizard.draw();
   }
 
   _executeSwap(playerId, dirX, dirY, blinkStats) {
@@ -1230,14 +1199,33 @@ export class GameScene extends Phaser.Scene {
   }
 
   _executeLocalBlink(wizard, dirX, dirY) {
-    let blinkDist;
+    // Arena: handle variant-specific local prediction
     if (this.gameMode === 'arena') {
       const spellData = this.playerSpellData.get(wizard.playerId);
+      const blinkId = spellData ? spellData.blinkId : 'default_blink';
       const bStats = spellData ? spellData.blinkStats : {};
-      blinkDist = bStats.blinkDistance || BLINK_DISTANCE;
+
+      if (blinkId === 'rush') {
+        // Start local dash animation (no collision, host handles that)
+        const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+        wizard.dashing = true;
+        wizard.dashDir = { x: dirX / len, y: dirY / len };
+        wizard.dashSpeed = 450;
+        wizard.dashRemaining = bStats.dashDistance || 180;
+        wizard._rushHitPlayers = new Set();
+        return;
+      }
+
+      if (blinkId === 'swap') {
+        // Swap fires a projectile, no local prediction needed
+        return;
+      }
+
+      // Extended blink or default
+      var blinkDist = bStats.blinkDistance || BLINK_DISTANCE;
     } else {
       const upgrades = this.playerUpgrades.get(wizard.playerId) || {};
-      blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+      var blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
     }
 
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
@@ -1459,15 +1447,23 @@ export class GameScene extends Phaser.Scene {
         const tcy = this.arena.centerY - bot.y;
         const len = Math.sqrt(tcx * tcx + tcy * tcy) || 1;
         bot.setInput(tcx / len, tcy / len);
-      } else if (nearestDist > 160) {
+      } else if (nearestDist > 180) {
         const len = nearestDist || 1;
         bot.setInput(dx / len, dy / len);
-      } else if (nearestDist < 80) {
+      } else if (nearestDist < 70) {
         const len = nearestDist || 1;
         bot.setInput(-dx / len, -dy / len);
       } else {
+        // Mid range: mix strafe with periodic approach/retreat to break circling
         const len = nearestDist || 1;
-        bot.setInput(-dy / len * 0.5, dx / len * 0.5);
+        const strafeDir = ((botId.charCodeAt(4) || 0) % 2 === 0) ? 1 : -1; // consistent per bot
+        const phase = Math.sin(now * 0.002 + (botId.charCodeAt(4) || 0)); // oscillate over ~3s
+        const strafeFactor = 0.5 + phase * 0.3;
+        const approachFactor = phase * 0.6; // positive = approach, negative = retreat
+        const mx = (dx / len) * approachFactor + (-dy / len) * strafeFactor * strafeDir;
+        const my = (dy / len) * approachFactor + (dx / len) * strafeFactor * strafeDir;
+        const mLen = Math.sqrt(mx * mx + my * my) || 1;
+        bot.setInput(mx / mLen, my / mLen);
       }
 
       if (this.gameMode === 'arena') {
@@ -1548,6 +1544,38 @@ export class GameScene extends Phaser.Scene {
       wizard.update(delta);
       if (wizard.alive) this.arena.constrainToWall(wizard);
 
+      // Rush dash collision detection (while dashing)
+      if (wizard.dashing && wizard.alive) {
+        const rushKb = wizard._rushKnockback || 500;
+        const rushHitR = wizard._rushHitRadius || 25;
+        const rushHit = wizard._rushHitPlayers || new Set();
+
+        this.wizards.forEach((other) => {
+          if (other.playerId === wizard.playerId || !other.alive || rushHit.has(other.playerId)) return;
+          const dx = other.x - wizard.x;
+          const dy = other.y - wizard.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < rushHitR + other.radius) {
+            rushHit.add(other.playerId);
+            const pushLen = dist > 0 ? dist : 1;
+            other.applyKnockback((dx / pushLen) * rushKb, (dy / pushLen) * rushKb);
+          }
+        });
+
+        // Afterimage every few frames
+        if (!wizard._rushTrailTime || Date.now() - wizard._rushTrailTime > 50) {
+          wizard._rushTrailTime = Date.now();
+          const fx = this.add.graphics();
+          this._blinkFxList.push(fx);
+          fx.fillStyle(0xff8844, 0.25);
+          fx.fillCircle(wizard.x, wizard.y, wizard.radius);
+          this.tweens.add({
+            targets: fx, alpha: 0, duration: 250,
+            onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); },
+          });
+        }
+      }
+
       // Update cooldown visuals for all wizards
       let fbPct, ringColor;
       if (this.gameMode === 'arena') {
@@ -1625,15 +1653,17 @@ export class GameScene extends Phaser.Scene {
         if (dealt === -1 && fb.spellId === 'meteor') {
           const hits = fb.applyExplosionDamage(this.wizards);
           hits.forEach(({ wizard: w, dealt: d }) => {
-            if (d > 0 && fb.lifesteal > 0) {
-              const owner = this.wizards.get(fb.ownerPlayerId);
-              if (owner && owner.alive) {
-                owner.health = Math.min(owner.maxHealth, owner.health + d * fb.lifesteal);
+            if (d > 0) {
+              w.lastHitBy = fb.ownerPlayerId;
+              if (fb.lifesteal > 0) {
+                const owner = this.wizards.get(fb.ownerPlayerId);
+                if (owner && owner.alive) {
+                  owner.health = Math.min(owner.maxHealth, owner.health + d * fb.lifesteal);
+                }
               }
-            }
-            // Kill credit
-            if (wasAlive && !w.alive && this.gameMode === 'arena') {
-              this.goldManager.awardKillGold(fb.ownerPlayerId);
+              if (wasAlive && !w.alive && this.gameMode === 'arena') {
+                this.goldManager.awardKillGold(fb.ownerPlayerId);
+              }
             }
           });
         } else if (dealt === -3 && fb.spellId === 'mirror_image') {
@@ -1649,6 +1679,9 @@ export class GameScene extends Phaser.Scene {
             caster.draw(); target.draw();
           }
         } else if (dealt > 0) {
+          // Track last hit for lava kill credit
+          wizard.lastHitBy = fb.ownerPlayerId;
+
           if (fb.lifesteal > 0) {
             const owner = this.wizards.get(fb.ownerPlayerId);
             if (owner && owner.alive) {
@@ -1668,19 +1701,22 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // Fireball-vs-fireball collision (different owners only, one destroys the other)
+    // Projectile-vs-projectile collision (different owners only)
+    const noCollideSpells = new Set(['tether', 'vortex_wall', 'mirror_image', 'gravity_sphere', 'swap_projectile']);
     for (let i = 0; i < this.fireballs.length; i++) {
       const a = this.fireballs[i];
-      if (!a.alive) continue;
+      if (!a.alive || noCollideSpells.has(a.spellId)) continue;
+      // Tethered tethers are immune
+      if (a.spellId === 'tether' && a.phase === 'tethered') continue;
       for (let j = i + 1; j < this.fireballs.length; j++) {
         const b = this.fireballs[j];
-        if (!b.alive) continue;
+        if (!b.alive || noCollideSpells.has(b.spellId)) continue;
+        if (b.spellId === 'tether' && b.phase === 'tethered') continue;
         if (a.ownerPlayerId === b.ownerPlayerId) continue;
         const dx = a.x - b.x;
         const dy = a.y - b.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < a.radius + b.radius) {
-          // Both fireballs destroy each other
+        if (dist < (a.radius || 5) + (b.radius || 5)) {
           a.alive = false;
           b.alive = false;
         }
@@ -1699,7 +1735,22 @@ export class GameScene extends Phaser.Scene {
       return true;
     });
 
+    // Track pre-lava alive state for kill credit
+    const preLavaAlive = new Map();
+    if (this.gameMode === 'arena') {
+      this.wizards.forEach((w) => preLavaAlive.set(w.playerId, w.alive));
+    }
+
     this.arena.applyLavaDamage(this.wizards, delta);
+
+    // Award kill gold if someone died to lava and had a lastHitBy
+    if (this.gameMode === 'arena') {
+      this.wizards.forEach((w) => {
+        if (preLavaAlive.get(w.playerId) && !w.alive && w.lastHitBy) {
+          this.goldManager.awardKillGold(w.lastHitBy);
+        }
+      });
+    }
 
     // Check round end
     const aliveWizards = Array.from(this.wizards.values()).filter((w) => w.alive);

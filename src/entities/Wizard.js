@@ -44,6 +44,7 @@ export class Wizard {
 
     // Kill credit tracking
     this.lastHitBy = null; // playerId of last player who damaged us
+    this.knockbackResist = 0; // 0-1, reduces incoming knockback
 
     // Rush dash state
     this.dashing = false;
@@ -188,8 +189,9 @@ export class Wizard {
     // Smash Bros-style: knockback scales with damage taken (lower health = more knockback)
     const damagePct = 1 - (this.health / this.maxHealth); // 0 at full HP, 1 at 0 HP
     const scale = 1 + damagePct * 2; // 1x at full HP, up to 3x at low HP
-    this.knockbackVel.x += velX * scale;
-    this.knockbackVel.y += velY * scale;
+    const resist = 1 - Math.min(0.8, this.knockbackResist); // max 80% reduction
+    this.knockbackVel.x += velX * scale * resist;
+    this.knockbackVel.y += velY * scale * resist;
   }
 
   takeDamage(amount) {

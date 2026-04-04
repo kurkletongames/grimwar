@@ -23,6 +23,7 @@ export class Fireball {
     this.radius = stats.radius || BASE_FIREBALL_RADIUS;
     this.piercing = stats.piercing || false;
     this.lifesteal = stats.lifesteal || 0;
+    this.invisible = stats.invisible || false;
     this.hitTargets = new Set(); // track already-hit wizards for piercing
 
     // Normalize direction
@@ -59,25 +60,26 @@ export class Fireball {
 
   draw() {
     this.graphics.clear();
+    const a = this.invisible ? 0.08 : 1; // nearly invisible to enemies
 
     // Trail
     this.trail.forEach((p, i) => {
-      const alpha = (i / this.trail.length) * 0.5;
+      const alpha = (i / this.trail.length) * 0.5 * a;
       const size = (i / this.trail.length) * this.radius;
       this.graphics.fillStyle(0xff6600, alpha);
       this.graphics.fillCircle(p.x, p.y, size);
     });
 
     // Main fireball - outer glow
-    this.graphics.fillStyle(0xff4400, 0.4);
+    this.graphics.fillStyle(0xff4400, 0.4 * a);
     this.graphics.fillCircle(this.x, this.y, this.radius * 2);
 
     // Core
-    this.graphics.fillStyle(0xff6600, 1);
+    this.graphics.fillStyle(0xff6600, a);
     this.graphics.fillCircle(this.x, this.y, this.radius);
 
     // Bright center
-    this.graphics.fillStyle(0xffaa00, 1);
+    this.graphics.fillStyle(0xffaa00, a);
     this.graphics.fillCircle(this.x, this.y, this.radius * 0.5);
   }
 
@@ -127,6 +129,7 @@ export class Fireball {
       radius: this.radius,
       piercing: this.piercing,
       lifesteal: this.lifesteal,
+      invisible: this.invisible,
     };
   }
 

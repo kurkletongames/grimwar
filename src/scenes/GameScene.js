@@ -38,152 +38,128 @@ const RARITY = {
 };
 
 export const UPGRADES = [
-  // ---- Common ----
+  // ============ COMMON (60%) ============
   {
-    id: 'damage_1',
-    title: 'Searing Flames',
-    desc: 'Fireball damage +5',
-    rarity: 'common',
-    apply: (u) => { u.damage += 5; },
+    id: 'damage_1', title: 'Searing Flames', desc: 'Fireball damage +5',
+    rarity: 'common', apply: (u) => { u.damage += 5; },
   },
   {
-    id: 'speed_1',
-    title: 'Swift Cast',
-    desc: 'Fireball speed +40',
-    rarity: 'common',
-    apply: (u) => { u.speed += 40; },
+    id: 'cooldown_1', title: 'Quick Hands', desc: 'Cooldown -300ms',
+    rarity: 'common', apply: (u) => { u.cooldownReduction += 300; },
   },
   {
-    id: 'knockback_1',
-    title: 'Concussive Blast',
-    desc: 'Fireball knockback +150',
-    rarity: 'common',
-    apply: (u) => { u.knockback += 150; },
+    id: 'hp_1', title: 'Tough Skin', desc: 'Max HP +15',
+    rarity: 'common', apply: (u) => { u.bonusHp += 15; },
   },
   {
-    id: 'cooldown_1',
-    title: 'Quick Hands',
-    desc: 'Fireball cooldown -300ms',
-    rarity: 'common',
-    apply: (u) => { u.cooldownReduction += 300; },
+    id: 'blink_range_1', title: 'Long Step', desc: 'Blink distance +30',
+    rarity: 'common', apply: (u) => { u.blinkDistance += 30; },
   },
   {
-    id: 'hp_1',
-    title: 'Tough Skin',
-    desc: 'Max HP +15',
-    rarity: 'common',
-    apply: (u) => { u.bonusHp += 15; },
+    id: 'radius_small', title: 'Wider Flames', desc: 'Fireball size +25%',
+    rarity: 'common', apply: (u) => { u.radius = Math.round(u.radius * 1.25); },
   },
 
-  // ---- Rare ----
+  // ============ RARE (25%) ============
   {
-    id: 'multishot_1',
-    title: 'Split Bolt',
-    desc: 'Fire 1 additional fireball in a spread',
-    rarity: 'rare',
-    apply: (u) => { u.multishot += 1; },
+    id: 'multishot_1', title: 'Split Bolt', desc: '+1 additional fireball',
+    rarity: 'rare', apply: (u) => { u.multishot += 1; },
   },
   {
-    id: 'radius_1',
-    title: 'Meteor Size',
-    desc: 'Fireball size +50%',
-    rarity: 'rare',
-    apply: (u) => { u.radius = Math.round(u.radius * 1.5); },
+    id: 'cooldown_2', title: 'Rapid Fire', desc: 'Cooldown -500ms',
+    rarity: 'rare', apply: (u) => { u.cooldownReduction += 500; },
   },
   {
-    id: 'blink_range',
-    title: 'Phase Shift',
-    desc: 'Blink distance +60',
-    rarity: 'rare',
-    apply: (u) => { u.blinkDistance += 60; },
+    id: 'lifesteal_1', title: 'Siphon', desc: 'Heal for 20% of damage dealt',
+    rarity: 'rare', apply: (u) => { u.lifesteal += 0.2; },
   },
   {
-    id: 'damage_2',
-    title: 'Inferno',
-    desc: 'Fireball damage +10',
-    rarity: 'rare',
-    apply: (u) => { u.damage += 10; },
+    id: 'heavy_hitter', title: 'Heavy Hitter', desc: 'Damage +12, but fireball speed -60',
+    rarity: 'rare', apply: (u) => { u.damage += 12; u.speed = Math.max(100, u.speed - 60); },
   },
   {
-    id: 'cooldown_2',
-    title: 'Rapid Fire',
-    desc: 'Fireball cooldown -500ms',
-    rarity: 'rare',
-    apply: (u) => { u.cooldownReduction += 500; },
+    id: 'adrenaline', title: 'Adrenaline', desc: 'Cooldown -600ms, but Max HP -15',
+    rarity: 'rare', apply: (u) => { u.cooldownReduction += 600; u.bonusHp -= 15; },
   },
   {
-    id: 'lifesteal_1',
-    title: 'Siphon',
-    desc: 'Heal for 20% of fireball damage dealt',
-    rarity: 'rare',
-    apply: (u) => { u.lifesteal += 0.2; },
-  },
-  {
-    id: 'hp_2',
-    title: 'Fortify',
-    desc: 'Max HP +30',
-    rarity: 'rare',
-    apply: (u) => { u.bonusHp += 30; },
+    id: 'big_boi', title: 'Big Boi', desc: 'Fireball size x2, but speed -40',
+    rarity: 'rare', apply: (u) => { u.radius *= 2; u.speed = Math.max(100, u.speed - 40); },
   },
 
-  // ---- Epic ----
+  // ============ EPIC (12%) ============
   {
-    id: 'blink_knockback',
-    title: 'Aftershock',
-    desc: 'Blink leaves a shockwave that knocks back nearby enemies',
-    rarity: 'epic',
-    apply: (u) => { u.blinkKnockback += 900; },
+    id: 'blink_knockback', title: 'Aftershock', desc: 'Blink creates a knockback shockwave',
+    rarity: 'epic', apply: (u) => { u.blinkKnockback += 900; },
   },
   {
-    id: 'piercing',
-    title: 'Piercing Flame',
-    desc: 'Fireballs pass through enemies, hitting all in their path',
-    rarity: 'epic',
-    apply: (u) => { u.piercing = true; },
+    id: 'piercing', title: 'Piercing Flame', desc: 'Fireballs pass through all enemies',
+    rarity: 'epic', apply: (u) => { u.piercing = true; },
   },
   {
-    id: 'multishot_2',
-    title: 'Tri-Shot',
-    desc: 'Fire 2 additional fireballs in a spread',
-    rarity: 'epic',
-    apply: (u) => { u.multishot += 2; },
+    id: 'multishot_2', title: 'Tri-Shot', desc: '+2 additional fireballs',
+    rarity: 'epic', apply: (u) => { u.multishot += 2; },
   },
   {
-    id: 'knockback_2',
-    title: 'Gale Force',
-    desc: 'Fireball knockback +400',
-    rarity: 'epic',
-    apply: (u) => { u.knockback += 400; },
+    id: 'paper_wizard', title: 'Paper Wizard', desc: 'Damage x2, but Max HP halved',
+    rarity: 'epic', apply: (u) => { u.damage *= 2; u.bonusHp -= 50; },
   },
   {
-    id: 'lifesteal_2',
-    title: 'Soul Drain',
-    desc: 'Heal for 40% of fireball damage dealt',
-    rarity: 'epic',
-    apply: (u) => { u.lifesteal += 0.4; },
+    id: 'blood_magic', title: 'Blood Magic', desc: 'Cooldown -1000ms, but lose 8 HP per cast',
+    rarity: 'epic', apply: (u) => { u.cooldownReduction += 1000; u.castHpCost = (u.castHpCost || 0) + 8; },
+  },
+  {
+    id: 'unstable_core', title: 'Unstable Core', desc: 'Fireballs explode on hit (AoE), but self-knockback +200',
+    rarity: 'epic', apply: (u) => { u.explosionOnHit = true; u.selfKnockback += 200; },
+  },
+  {
+    id: 'sniper', title: 'Sniper', desc: 'Damage +20, Speed +100, but -1 projectile (min 1)',
+    rarity: 'epic', apply: (u) => { u.damage += 20; u.speed += 100; u.multishot = Math.max(1, u.multishot - 1); },
+  },
+  {
+    id: 'tank', title: 'Juggernaut', desc: 'Max HP +50, knockback resistance, but speed -30',
+    rarity: 'epic', apply: (u) => { u.bonusHp += 50; u.knockbackResist = (u.knockbackResist || 0) + 0.4; u.speed = Math.max(100, u.speed - 30); },
+  },
+  {
+    id: 'vampiric', title: 'Vampiric Pact', desc: 'Lifesteal +50%, but Max HP -20',
+    rarity: 'epic', apply: (u) => { u.lifesteal += 0.5; u.bonusHp -= 20; },
   },
 
-  // ---- Legendary ----
+  // ============ LEGENDARY (3%) ============
   {
-    id: 'multishot_3',
-    title: 'Barrage',
-    desc: 'Fire 3 additional fireballs in a wide spread',
-    rarity: 'legendary',
-    apply: (u) => { u.multishot += 3; },
+    id: 'multishot_3', title: 'Barrage', desc: '+3 fireballs in a wide spread',
+    rarity: 'legendary', apply: (u) => { u.multishot += 3; },
   },
   {
-    id: 'glass_cannon',
-    title: 'Glass Cannon',
-    desc: 'Fireball damage +25, but you get knocked back when firing',
-    rarity: 'legendary',
-    apply: (u) => { u.damage += 25; u.selfKnockback += 300; },
+    id: 'glass_cannon', title: 'Glass Cannon', desc: 'Damage +25, huge self-knockback when firing',
+    rarity: 'legendary', apply: (u) => { u.damage += 25; u.selfKnockback += 300; },
   },
   {
-    id: 'overcharge',
-    title: 'Overcharge',
-    desc: 'Fireball cooldown -800ms, speed +60, damage +8',
-    rarity: 'legendary',
-    apply: (u) => { u.cooldownReduction += 800; u.speed += 60; u.damage += 8; },
+    id: 'death_wish', title: 'Death Wish', desc: 'Damage x3, but Max HP set to 30',
+    rarity: 'legendary', apply: (u) => { u.damage *= 3; u.bonusHp = -(100 - 30); },
+  },
+  {
+    id: 'shotgun', title: 'Shotgun Blast', desc: '+5 projectiles, but range halved',
+    rarity: 'legendary', apply: (u) => { u.multishot += 5; u.speed = Math.max(80, u.speed - 120); },
+  },
+  {
+    id: 'meteor_strikes', title: 'Meteor Strikes', desc: 'All fireballs explode on hit with massive AoE',
+    rarity: 'legendary', apply: (u) => { u.explosionOnHit = true; u.explosionRadius = (u.explosionRadius || 0) + 60; },
+  },
+  {
+    id: 'ghostfire', title: 'Ghostfire', desc: 'Fireballs are invisible, piercing, but damage -5',
+    rarity: 'legendary', apply: (u) => { u.invisible = true; u.piercing = true; u.damage = Math.max(3, u.damage - 5); },
+  },
+  {
+    id: 'blink_assassin', title: 'Blink Assassin', desc: 'Blink cooldown halved, distance +80, huge shockwave',
+    rarity: 'legendary', apply: (u) => { u.blinkCooldownMult = (u.blinkCooldownMult || 1) * 0.5; u.blinkDistance += 80; u.blinkKnockback += 1200; },
+  },
+  {
+    id: 'berserker', title: 'Berserker', desc: 'The lower your HP, the faster you cast (up to 3x speed)',
+    rarity: 'legendary', apply: (u) => { u.berserker = true; },
+  },
+  {
+    id: 'mirror_shield', title: 'Mirror Shield', desc: 'Chance to reflect projectiles that hit you back at the attacker',
+    rarity: 'legendary', apply: (u) => { u.reflectChance = (u.reflectChance || 0) + 0.3; },
   },
 ];
 
@@ -431,6 +407,15 @@ export class GameScene extends Phaser.Scene {
         lifesteal: 0,
         bonusHp: 0,
         selfKnockback: 0,
+        // New roguelike properties
+        castHpCost: 0,
+        explosionOnHit: false,
+        explosionRadius: 0,
+        knockbackResist: 0,
+        invisible: false,
+        blinkCooldownMult: 1,
+        berserker: false,
+        reflectChance: 0,
       });
 
       // Arena mode spell data (category-based slots)
@@ -797,9 +782,16 @@ export class GameScene extends Phaser.Scene {
         const upgrades = this.playerUpgrades.get(player.peerId);
         bonusHp = upgrades ? upgrades.bonusHp || 0 : 0;
       }
-      if (bonusHp > 0) {
-        wizard.maxHealth += bonusHp;
+      if (bonusHp !== 0) {
+        wizard.maxHealth = Math.max(20, wizard.maxHealth + bonusHp);
         wizard.health = wizard.maxHealth;
+      }
+      // Apply roguelike knockback resistance
+      if (this.gameMode !== 'arena') {
+        const upgrades = this.playerUpgrades.get(player.peerId);
+        if (upgrades && upgrades.knockbackResist) {
+          wizard.knockbackResist = upgrades.knockbackResist;
+        }
       }
       this.wizards.set(player.peerId, wizard);
     });
@@ -821,7 +813,19 @@ export class GameScene extends Phaser.Scene {
   _getFireballCooldown(playerId) {
     const upgrades = this.playerUpgrades.get(playerId);
     const reduction = upgrades ? upgrades.cooldownReduction : 0;
-    return Math.max(500, FIREBALL_COOLDOWN - reduction); // min 0.5s
+    let cd = Math.max(500, FIREBALL_COOLDOWN - reduction);
+
+    // Berserker: cast faster at low HP (up to 3x at 0 HP)
+    if (upgrades && upgrades.berserker) {
+      const wizard = this.wizards.get(playerId);
+      if (wizard && wizard.alive) {
+        const hpPct = wizard.health / wizard.maxHealth;
+        const speedMult = 1 + (1 - hpPct) * 2; // 1x at full, 3x at 0
+        cd = Math.max(300, cd / speedMult);
+      }
+    }
+
+    return cd;
   }
 
   // ---- Arena mode spell helpers ----
@@ -846,7 +850,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   _getBlinkCooldown(playerId) {
-    if (this.gameMode !== 'arena') return BLINK_COOLDOWN;
+    if (this.gameMode !== 'arena') {
+      const upgrades = this.playerUpgrades.get(playerId);
+      const mult = upgrades ? upgrades.blinkCooldownMult || 1 : 1;
+      return Math.max(2000, BLINK_COOLDOWN * mult);
+    }
     const data = this.playerSpellData.get(playerId);
     if (!data) return 4000;
     const def = BLINK_DEFS[data.blinkId] || BLINK_DEFS.default_blink;
@@ -1043,6 +1051,14 @@ export class GameScene extends Phaser.Scene {
       if (wizard && wizard.alive) {
         const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
         wizard.applyKnockback((-dirX / len) * stats.selfKnockback, (-dirY / len) * stats.selfKnockback);
+      }
+    }
+
+    // Blood Magic: HP cost per cast
+    if (stats.castHpCost > 0) {
+      const wizard = this.wizards.get(playerId);
+      if (wizard && wizard.alive) {
+        wizard.health = Math.max(1, wizard.health - stats.castHpCost);
       }
     }
   }
@@ -1648,6 +1664,24 @@ export class GameScene extends Phaser.Scene {
       }
 
       this.wizards.forEach((wizard) => {
+        // Mirror Shield: chance to reflect projectile before hit check
+        if (fb.alive && wizard.alive && wizard.playerId !== fb.ownerPlayerId && fb.spellId === 'fireball') {
+          const wizUpg = this.playerUpgrades.get(wizard.playerId);
+          if (wizUpg && wizUpg.reflectChance > 0) {
+            const dx = fb.x - wizard.x;
+            const dy = fb.y - wizard.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < (fb.radius || 8) * 2 + wizard.radius && Math.random() < wizUpg.reflectChance) {
+              // Reflect: reverse velocity and change owner
+              fb.velX = -fb.velX;
+              fb.velY = -fb.velY;
+              fb.ownerPlayerId = wizard.playerId;
+              fb.hitTargets?.clear();
+              return; // skip normal hit check
+            }
+          }
+        }
+
         const wasAlive = wizard.alive;
         const dealt = fb.checkHit(wizard);
         if (dealt === -1 && fb.spellId === 'meteor') {
@@ -1688,6 +1722,34 @@ export class GameScene extends Phaser.Scene {
               owner.health = Math.min(owner.maxHealth, owner.health + dealt * fb.lifesteal);
             }
           }
+
+          // Explosion on hit (roguelike upgrade)
+          const upgrades = this.playerUpgrades.get(fb.ownerPlayerId);
+          if (upgrades && upgrades.explosionOnHit && fb.spellId === 'fireball') {
+            const aoeR = upgrades.explosionRadius || 50;
+            this.wizards.forEach((w) => {
+              if (!w.alive || w.playerId === fb.ownerPlayerId || w.playerId === wizard.playerId) return;
+              const adx = fb.x - w.x;
+              const ady = fb.y - w.y;
+              const adist = Math.sqrt(adx * adx + ady * ady);
+              if (adist < aoeR + w.radius) {
+                const falloff = 1 - Math.min(1, adist / aoeR);
+                const aoeDmg = Math.round(dealt * 0.5 * falloff);
+                if (aoeDmg > 0) {
+                  w.takeDamage(aoeDmg);
+                  w.lastHitBy = fb.ownerPlayerId;
+                  const pushLen = adist > 0 ? adist : 1;
+                  w.applyKnockback((-adx / pushLen) * fb.knockback * 0.5 * falloff, (-ady / pushLen) * fb.knockback * 0.5 * falloff);
+                }
+              }
+            });
+            // Explosion VFX
+            const fx = this.add.graphics();
+            fx.lineStyle(2, 0xff6600, 0.6);
+            fx.strokeCircle(fb.x, fb.y, 5);
+            this.tweens.add({ targets: fx, scaleX: aoeR / 5, scaleY: aoeR / 5, alpha: 0, duration: 300, onComplete: () => fx.destroy() });
+          }
+
           // Kill credit
           if (wasAlive && !wizard.alive && this.gameMode === 'arena') {
             this.goldManager.awardKillGold(fb.ownerPlayerId);

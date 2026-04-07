@@ -37,6 +37,7 @@ export class Wizard {
     this.fireballCooldownPct = 0; // 0 = ready, 1 = just cast
     this.cooldownRingColor = 0xff6600; // default fireball orange
     this.blinkReady = true;
+    this.blinkCooldownPct = 0; // 0 = ready, 1 = just cast
     this.blinkGlowAlpha = 0; // for the pulse effect
 
     // Slow effect (from Ice Shard)
@@ -45,6 +46,7 @@ export class Wizard {
     // Kill credit tracking
     this.lastHitBy = null; // playerId of last player who damaged us
     this.knockbackResist = 0; // 0-1, reduces incoming knockback
+    this.tethered = false; // true when being pulled by tether (disables friction)
 
     // Rush dash state
     this.dashing = false;
@@ -159,19 +161,35 @@ export class Wizard {
         }
       }
 
-      // Blink ready dot indicator
+      // Blink cooldown arc (below wizard)
+      const blinkArcY = this.y + this.radius + 10;
+      const blinkArcR = 8;
+      const blinkReadyPct = 1 - this.blinkCooldownPct;
+
       if (this.blinkReady) {
+        // Ready — bright dot
         this.cooldownGraphics.fillStyle(0x4fc3f7, 0.9);
-        this.cooldownGraphics.fillCircle(this.x, this.y + this.radius + 8, 3);
+        this.cooldownGraphics.fillCircle(this.x, blinkArcY, 3);
       } else {
-        this.cooldownGraphics.fillStyle(0x333333, 0.4);
-        this.cooldownGraphics.fillCircle(this.x, this.y + this.radius + 8, 3);
+        // On cooldown — arc indicator
+        this.cooldownGraphics.lineStyle(1.5, 0x333333, 0.3);
+        this.cooldownGraphics.strokeCircle(this.x, blinkArcY, blinkArcR);
+
+        if (blinkReadyPct > 0) {
+          this.cooldownGraphics.lineStyle(1.5, 0x4fc3f7, 0.7);
+          this.cooldownGraphics.beginPath();
+          const bStart = -Math.PI / 2;
+          const bEnd = bStart + blinkReadyPct * Math.PI * 2;
+          this.cooldownGraphics.arc(this.x, blinkArcY, blinkArcR, bStart, bEnd, false);
+          this.cooldownGraphics.strokePath();
+        }
       }
     }
   }
 
-  setCooldowns(fireballPct, blinkReady) {
+  setCooldowns(fireballPct, blinkReady, blinkPct) {
     this.fireballCooldownPct = fireballPct;
+    this.blinkCooldownPct = blinkPct || 0;
 
     // Trigger glow pulse when blink transitions from not-ready to ready
     if (blinkReady && !this.blinkReady) {
@@ -261,12 +279,14 @@ export class Wizard {
     // Apply knockback
     this.x += this.knockbackVel.x * dt;
     this.y += this.knockbackVel.y * dt;
-    this.knockbackVel.x *= FRICTION;
-    this.knockbackVel.y *= FRICTION;
 
-    // Kill tiny knockback
-    if (Math.abs(this.knockbackVel.x) < FRICTION_THRESHOLD) this.knockbackVel.x = 0;
-    if (Math.abs(this.knockbackVel.y) < FRICTION_THRESHOLD) this.knockbackVel.y = 0;
+    // Apply friction (skip if tethered — no friction during tether pull)
+    if (!this.tethered) {
+      this.knockbackVel.x *= FRICTION;
+      this.knockbackVel.y *= FRICTION;
+      if (Math.abs(this.knockbackVel.x) < FRICTION_THRESHOLD) this.knockbackVel.x = 0;
+      if (Math.abs(this.knockbackVel.y) < FRICTION_THRESHOLD) this.knockbackVel.y = 0;
+    }
 
     // Apply movement
     this.x += moveX;

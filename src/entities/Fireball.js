@@ -48,7 +48,7 @@ export class Fireball {
 
     // Add trail particle
     this.trail.push({ x: this.x, y: this.y, alpha: 1 });
-    if (this.trail.length > 12) this.trail.shift();
+    if (this.trail.length > 6) this.trail.shift();
 
     // Lifetime check
     if (Date.now() - this.spawnTime > FIREBALL_LIFETIME) {

@@ -1,5 +1,4 @@
-const TRAVEL_LIFETIME = 3000;
-const WELL_DPS_PCT = 0.04; // 4% max HP per second drain while in pull radius
+const WELL_DPS_PCT = 0.12; // 12% max HP per second drain while in pull radius
 
 export class GravitySphere {
   constructor(scene, x, y, dirX, dirY, ownerPlayerId, stats = {}) {
@@ -11,17 +10,14 @@ export class GravitySphere {
     this.alive = true;
     this.spawnTime = Date.now();
 
-    this.phase = 'travel'; // 'travel' or 'well'
-    this.wellStartTime = 0;
-
-    const speed = stats.speed || 200;
+    const speed = stats.speed || 120;
     this.damage = stats.damage || 5;
     this.radius = stats.radius || 8;
-    this.pullStrength = stats.pullStrength || 120;
-    this.pullRadius = stats.pullRadius || 100;
-    this.wellDuration = stats.wellDuration || 3000;
+    this.pullStrength = stats.pullStrength || 140;
+    this.pullRadius = stats.pullRadius || 110;
+    this.lifetime = stats.lifetime || 6000;
     this.lifesteal = stats.lifesteal || 0;
-    this.hitTargets = new Set();
+    this.speed = speed;
 
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
     this.velX = (dirX / len) * speed;
@@ -35,148 +31,81 @@ export class GravitySphere {
 
   update(delta) {
     if (!this.alive) return;
-
     const dt = delta / 1000;
 
-    if (this.phase === 'travel') {
-      this.x += this.velX * dt;
-      this.y += this.velY * dt;
+    this.x += this.velX * dt;
+    this.y += this.velY * dt;
+    this.pulsePhase += dt * 3;
 
-      this.trail.push({ x: this.x, y: this.y });
-      if (this.trail.length > 8) this.trail.shift();
+    this.trail.push({ x: this.x, y: this.y });
+    if (this.trail.length > 5) this.trail.shift();
 
-      if (Date.now() - this.spawnTime > TRAVEL_LIFETIME) {
-        this._becomeWell();
-      }
-    } else {
-      // Well phase
-      this.pulsePhase += dt * 3;
-      if (Date.now() - this.wellStartTime > this.wellDuration) {
-        this.alive = false;
-      }
+    if (Date.now() - this.spawnTime > this.lifetime) {
+      this.alive = false;
     }
 
     this.draw();
   }
 
-  _becomeWell() {
-    this.phase = 'well';
-    this.wellStartTime = Date.now();
-    this.velX = 0;
-    this.velY = 0;
-    this.trail = [];
-  }
-
   draw() {
     this.graphics.clear();
+    const elapsed = Date.now() - this.spawnTime;
+    const lifePct = Math.max(0, 1 - elapsed / this.lifetime);
+    const pulse = 0.85 + Math.sin(this.pulsePhase) * 0.15;
 
-    if (this.phase === 'travel') {
-      // Trail
-      this.trail.forEach((p, i) => {
-        const alpha = (i / this.trail.length) * 0.3;
-        const size = (i / this.trail.length) * this.radius * 0.7;
-        this.graphics.fillStyle(0x9944ff, alpha);
-        this.graphics.fillCircle(p.x, p.y, size);
-      });
+    // Trail
+    this.trail.forEach((p, i) => {
+      const alpha = (i / this.trail.length) * 0.2 * lifePct;
+      const size = (i / this.trail.length) * this.radius * 0.6;
+      this.graphics.fillStyle(0x9944ff, alpha);
+      this.graphics.fillCircle(p.x, p.y, size);
+    });
 
-      // AoE range indicator (faint circle showing pull radius)
-      this.graphics.lineStyle(1, 0x9944ff, 0.12);
-      this.graphics.strokeCircle(this.x, this.y, this.pullRadius);
+    // Pull radius AoE fill
+    this.graphics.fillStyle(0x6622cc, 0.1 * lifePct);
+    this.graphics.fillCircle(this.x, this.y, this.pullRadius * pulse);
 
-      // Outer glow
-      this.graphics.fillStyle(0x9944ff, 0.3);
-      this.graphics.fillCircle(this.x, this.y, this.radius * 2);
+    // Outer ring
+    this.graphics.lineStyle(2, 0x9944ff, 0.35 * lifePct);
+    this.graphics.strokeCircle(this.x, this.y, this.pullRadius * pulse);
 
-      // Core
-      this.graphics.fillStyle(0x9944ff, 1);
-      this.graphics.fillCircle(this.x, this.y, this.radius);
+    // Mid ring
+    this.graphics.lineStyle(1.5, 0x9944ff, 0.25 * lifePct);
+    this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.6 * pulse);
 
-      // Bright center
-      this.graphics.fillStyle(0xcc88ff, 1);
-      this.graphics.fillCircle(this.x, this.y, this.radius * 0.4);
-    } else {
-      // Well phase — pulsing gravity field
-      const elapsed = Date.now() - this.wellStartTime;
-      const lifePct = Math.max(0, 1 - elapsed / this.wellDuration);
-      const pulse = 0.85 + Math.sin(this.pulsePhase) * 0.15;
-
-      // Outer pull radius — the main AoE circle
-      this.graphics.fillStyle(0x6622cc, 0.1 * lifePct);
-      this.graphics.fillCircle(this.x, this.y, this.pullRadius * pulse);
-
-      // Outer ring
-      this.graphics.lineStyle(2, 0x9944ff, 0.35 * lifePct);
-      this.graphics.strokeCircle(this.x, this.y, this.pullRadius * pulse);
-
-      // Mid ring
-      this.graphics.lineStyle(1.5, 0x9944ff, 0.25 * lifePct);
-      this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.6 * pulse);
-
-      // Inner ring
-      this.graphics.lineStyle(1, 0xcc88ff, 0.3 * lifePct);
-      this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.3 * pulse);
-
-      // Swirl lines (rotating inward spiral effect)
-      const numLines = 4;
-      for (let i = 0; i < numLines; i++) {
-        const angle = this.pulsePhase * 0.8 + (i / numLines) * Math.PI * 2;
-        const outerR = this.pullRadius * 0.8 * pulse;
-        const innerR = this.pullRadius * 0.2;
-        this.graphics.lineStyle(1, 0x9944ff, 0.2 * lifePct);
-        this.graphics.beginPath();
-        this.graphics.moveTo(
-          this.x + Math.cos(angle) * outerR,
-          this.y + Math.sin(angle) * outerR,
-        );
-        this.graphics.lineTo(
-          this.x + Math.cos(angle + 0.5) * innerR,
-          this.y + Math.sin(angle + 0.5) * innerR,
-        );
-        this.graphics.strokePath();
-      }
-
-      // Core
-      this.graphics.fillStyle(0x9944ff, 0.8 * lifePct);
-      this.graphics.fillCircle(this.x, this.y, 6);
-
-      // Bright center
-      this.graphics.fillStyle(0xcc88ff, lifePct);
-      this.graphics.fillCircle(this.x, this.y, 3);
+    // Swirl lines (2 instead of 4 for performance)
+    for (let i = 0; i < 2; i++) {
+      const angle = this.pulsePhase * 0.8 + i * Math.PI;
+      const outerR = this.pullRadius * 0.7 * pulse;
+      const innerR = this.pullRadius * 0.2;
+      this.graphics.lineStyle(1, 0x9944ff, 0.2 * lifePct);
+      this.graphics.beginPath();
+      this.graphics.moveTo(
+        this.x + Math.cos(angle) * outerR,
+        this.y + Math.sin(angle) * outerR,
+      );
+      this.graphics.lineTo(
+        this.x + Math.cos(angle + 0.5) * innerR,
+        this.y + Math.sin(angle + 0.5) * innerR,
+      );
+      this.graphics.strokePath();
     }
+
+    // Core
+    this.graphics.fillStyle(0x9944ff, 0.8 * lifePct);
+    this.graphics.fillCircle(this.x, this.y, 6);
+
+    // Bright center
+    this.graphics.fillStyle(0xcc88ff, lifePct);
+    this.graphics.fillCircle(this.x, this.y, 3);
   }
 
-  /**
-   * During travel: triggers well on contact with enemy.
-   * During well: no direct hit damage (pull + drain is applied by applyPull).
-   */
-  checkHit(wizard) {
-    if (!this.alive || !wizard.alive) return 0;
-    if (wizard.playerId === this.ownerPlayerId) return 0;
-
-    if (this.phase === 'travel') {
-      const dx = this.x - wizard.x;
-      const dy = this.y - wizard.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < this.radius * 2 + wizard.radius) {
-        // Small impact damage then become well
-        const prevHealth = wizard.health;
-        wizard.takeDamage(this.damage);
-        const dealt = prevHealth - wizard.health;
-        this._becomeWell();
-        return dealt;
-      }
-    }
+  checkHit() {
     return 0;
   }
 
-  /**
-   * Apply gravitational pull and HP drain to all enemies in range.
-   * Called by GameScene each frame during well phase.
-   */
   applyPull(wizards, delta) {
-    if (this.phase !== 'well' || !this.alive) return;
-
+    if (!this.alive) return;
     const dt = delta / 1000;
 
     wizards.forEach((wizard) => {
@@ -188,16 +117,22 @@ export class GravitySphere {
       const dist = Math.sqrt(dx * dx + dy * dy);
 
       if (dist < this.pullRadius && dist > 5) {
-        // Pull strength increases closer to center
         const factor = (1 - dist / this.pullRadius);
-        const pullForce = this.pullStrength * factor * dt;
         const nx = dx / dist;
         const ny = dy / dist;
 
+        // Strong pull — apply directly to knockback velocity to overcome friction
+        // The closer to center, the stronger the pull
+        const pullForce = this.pullStrength * (0.3 + factor * 0.7) * dt;
         wizard.knockbackVel.x += nx * pullForce;
         wizard.knockbackVel.y += ny * pullForce;
 
-        // HP drain while in the pull zone
+        // Also nudge position directly for an inescapable feel
+        const directPull = this.pullStrength * 0.15 * factor * dt;
+        wizard.x += nx * directPull;
+        wizard.y += ny * directPull;
+
+        // HP drain
         const drain = wizard.maxHealth * WELL_DPS_PCT * dt;
         wizard.takeDamage(drain);
       }
@@ -207,20 +142,16 @@ export class GravitySphere {
   serialize() {
     return {
       spellId: 'gravity_sphere',
-      x: this.x,
-      y: this.y,
-      velX: this.velX,
-      velY: this.velY,
+      x: this.x, y: this.y,
+      velX: this.velX, velY: this.velY,
       ownerPlayerId: this.ownerPlayerId,
       alive: this.alive,
-      damage: this.damage,
-      radius: this.radius,
+      damage: this.damage, radius: this.radius,
       pullStrength: this.pullStrength,
       pullRadius: this.pullRadius,
-      wellDuration: this.wellDuration,
-      phase: this.phase,
-      wellStartTime: this.wellStartTime,
+      lifetime: this.lifetime,
       lifesteal: this.lifesteal,
+      speed: this.speed,
     };
   }
 

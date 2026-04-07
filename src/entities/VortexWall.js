@@ -119,6 +119,11 @@ export class VortexWall {
     projectile.velX -= 2 * velDotNormal * this.normalX;
     projectile.velY -= 2 * velDotNormal * this.normalY;
 
+    // Update angle for homing missiles so the deflection sticks
+    if (projectile.spellId === 'homing_missile' && projectile.angle !== undefined) {
+      projectile.angle = Math.atan2(projectile.velY, projectile.velX);
+    }
+
     // Change ownership so it can now hit the original caster's enemies
     projectile.ownerPlayerId = this.ownerPlayerId;
 

@@ -1,7 +1,7 @@
 const ARENA_MAX_RADIUS = 440;
 const ARENA_MIN_RADIUS = 50;
 const WALL_RADIUS = 480; // outer boundary wall
-const SHRINK_RATE = 8; // pixels per second
+const SHRINK_RATE = 5.6; // pixels per second (30% slower)
 const LAVA_DAMAGE_PCT = 0.08; // 8% of max health per second
 const SHRINK_DELAY = 5000; // ms before arena starts shrinking
 

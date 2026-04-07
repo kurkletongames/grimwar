@@ -13,11 +13,12 @@ export class Tether {
     this.tetherStartTime = 0;
 
     const speed = stats.speed || 350;
-    this.damage = 0; // no damage
+    this.damage = 0; // no direct damage
     this.radius = stats.radius || 5;
-    this.tetherDuration = stats.tetherDuration || 4000; // longer default
-    this.pullForce = stats.pullForce || 80;
-    this.tetherRange = stats.tetherRange || 250;
+    this.tetherDuration = stats.tetherDuration || 6000;
+    this.pullForce = stats.pullForce || 160;
+    this.tetherRange = stats.tetherRange || 300;
+    this.tetherDrain = stats.tetherDrain || 0.05; // 5% max HP per second
     this.lifesteal = 0;
     this.speed = speed;
     this.knockback = 0;
@@ -137,15 +138,28 @@ export class Tether {
       return;
     }
 
-    // Pull strength scales UP with distance (stronger when further away)
-    const distFactor = Math.min(2, dist / 100); // 1x at 100px, 2x at 200px+
-    const pullMag = this.pullForce * distFactor * dt;
-
-    // Pull only along radial direction (toward caster) — preserves tangential velocity for rotation
     const nx = dx / dist;
     const ny = dy / dist;
-    target.knockbackVel.x += nx * pullMag;
-    target.knockbackVel.y += ny * pullMag;
+
+    // Mark target as tethered (disables friction on their knockback)
+    target.tethered = true;
+
+    // Strong velocity pull — scales with distance, no friction to fight
+    const distFactor = Math.min(3, dist / 60);
+    const velPull = this.pullForce * distFactor * dt;
+    target.knockbackVel.x += nx * velPull;
+    target.knockbackVel.y += ny * velPull;
+
+    // Direct position yank — bypasses everything
+    const directPull = this.pullForce * 0.4 * distFactor * dt;
+    target.x += nx * directPull;
+    target.y += ny * directPull;
+
+    // HP drain while tethered
+    if (this.tetherDrain > 0) {
+      const drain = target.maxHealth * this.tetherDrain * dt;
+      target.takeDamage(drain);
+    }
 
     this.setCasterTarget(
       { x: caster.x, y: caster.y },

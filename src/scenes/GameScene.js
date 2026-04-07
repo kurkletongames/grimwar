@@ -450,8 +450,8 @@ export class GameScene extends Phaser.Scene {
       });
 
       if (this.gameMode === 'arena') {
-        // Arena mode: start first round directly (shop opens between rounds)
-        this._startRound();
+        // Arena mode: open shop before round 1 with starting gold
+        this._startShopPhase(null);
       } else {
         this._startRound();
       }
@@ -477,12 +477,19 @@ export class GameScene extends Phaser.Scene {
     // Award gold
     this.goldManager.awardRoundGold(winnerId);
 
-    // Bots auto-ready in test mode
+    // Test mode: infinite gold for the human player
     if (this.testMode) {
+      this.goldManager.gold.set(this.localPlayerId, 99999);
+    }
+
+    // Bots auto-buy in test mode (before emitting shop event to avoid double-render)
+    if (this.testMode) {
+      this._suppressShopBroadcast = true;
       for (const botId of this.botIds) {
         this._botShopBuy(botId);
         this._shopReadyPlayers.add(botId);
       }
+      this._suppressShopBroadcast = false;
     }
 
     const shopData = {
@@ -672,6 +679,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _broadcastShopState() {
+    if (this._suppressShopBroadcast) return;
     const state = {
       type: 'shop-update',
       gold: this.goldManager.serialize(),
@@ -952,6 +960,8 @@ export class GameScene extends Phaser.Scene {
           return new Ricochet(this, x, y, fdx, fdy, playerId, stats);
         case 'tether':
           return new Tether(this, x, y, fdx, fdy, playerId, stats);
+        case 'swap_projectile':
+          return new SwapProjectile(this, x, y, fdx, fdy, playerId, stats);
         case 'fireball':
         default:
           return new Fireball(this, x, y, fdx, fdy, playerId, stats);
@@ -983,6 +993,17 @@ export class GameScene extends Phaser.Scene {
           -(dirX / len) * stats.selfKnockback,
           -(dirY / len) * stats.selfKnockback,
         );
+      }
+    }
+
+    // Mirror Image: also fire from active clone's position
+    if (this.gameMode === 'arena' && spellId === 'fireball') {
+      for (const fb of this.fireballs) {
+        if (fb.spellId === 'mirror_image' && fb.ownerPlayerId === playerId && fb.alive) {
+          const cloneFireball = new Fireball(this, fb.x, fb.y, dirX, dirY, playerId, stats);
+          this.fireballs.push(cloneFireball);
+          break; // only fire from one clone
+        }
       }
     }
   }
@@ -1215,6 +1236,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   _executeLocalBlink(wizard, dirX, dirY) {
+    let blinkDist = BLINK_DISTANCE;
+
     // Arena: handle variant-specific local prediction
     if (this.gameMode === 'arena') {
       const spellData = this.playerSpellData.get(wizard.playerId);
@@ -1222,7 +1245,6 @@ export class GameScene extends Phaser.Scene {
       const bStats = spellData ? spellData.blinkStats : {};
 
       if (blinkId === 'rush') {
-        // Start local dash animation (no collision, host handles that)
         const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
         wizard.dashing = true;
         wizard.dashDir = { x: dirX / len, y: dirY / len };
@@ -1233,15 +1255,13 @@ export class GameScene extends Phaser.Scene {
       }
 
       if (blinkId === 'swap') {
-        // Swap fires a projectile, no local prediction needed
         return;
       }
 
-      // Extended blink or default
-      var blinkDist = bStats.blinkDistance || BLINK_DISTANCE;
+      blinkDist = bStats.blinkDistance || BLINK_DISTANCE;
     } else {
       const upgrades = this.playerUpgrades.get(wizard.playerId) || {};
-      var blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
+      blinkDist = upgrades.blinkDistance || BLINK_DISTANCE;
     }
 
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
@@ -1341,7 +1361,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
-    if (!this.gameStarted || this.roundOver || this.countdownActive) return;
+    if (!this.gameStarted || this.roundOver || this.countdownActive || !this.arena) return;
 
     // Cap delta to prevent huge jumps
     delta = Math.min(delta, 50);
@@ -1396,8 +1416,10 @@ export class GameScene extends Phaser.Scene {
       const localCd = this._getFireballCooldown(this.localPlayerId);
       const fbPct = this.lastFireballTime === 0 ? 0 : Math.max(0, 1 - fbElapsed / localCd);
       const localBlinkCd = this._getBlinkCooldown(this.localPlayerId);
-      const blinkReady = this.lastBlinkTime === 0 || (now - this.lastBlinkTime) >= localBlinkCd;
-      localWizard.setCooldowns(fbPct, blinkReady);
+      const blinkElapsed = now - this.lastBlinkTime;
+      const blinkPct = this.lastBlinkTime === 0 ? 0 : Math.max(0, 1 - blinkElapsed / localBlinkCd);
+      const blinkReady = this.lastBlinkTime === 0 || blinkElapsed >= localBlinkCd;
+      localWizard.setCooldowns(fbPct, blinkReady, blinkPct);
     }
 
     this.arena.update(delta);
@@ -1552,6 +1574,7 @@ export class GameScene extends Phaser.Scene {
 
   _hostUpdate(delta) {
     if (this.testMode) this._updateBots();
+    if (!this.arena) return;
 
     this.arena.update(delta);
 
@@ -1613,10 +1636,11 @@ export class GameScene extends Phaser.Scene {
       const lastBlink = this.playerBlinkTimes.get(wizard.playerId) || 0;
       const blinkElapsed = now - lastBlink;
       const blinkCdForPlayer = this._getBlinkCooldown(wizard.playerId);
+      const blinkPct = lastBlink === 0 ? 0 : Math.max(0, 1 - blinkElapsed / blinkCdForPlayer);
       const blinkReady = lastBlink === 0 || blinkElapsed >= blinkCdForPlayer;
 
       wizard.cooldownRingColor = ringColor;
-      wizard.setCooldowns(fbPct, blinkReady);
+      wizard.setCooldowns(fbPct, blinkReady, blinkPct);
     });
 
     // Wizard-to-wizard collision (knockback transfer)
@@ -1626,7 +1650,7 @@ export class GameScene extends Phaser.Scene {
     const vortexWalls = this.fireballs.filter((fb) => fb.spellId === 'vortex_wall' && fb.alive);
     if (vortexWalls.length > 0) {
       this.fireballs.forEach((fb) => {
-        if (!fb.alive || fb.spellId === 'vortex_wall' || fb.spellId === 'mirror_image') return;
+        if (!fb.alive || fb.spellId === 'vortex_wall' || fb.spellId === 'mirror_image' || fb.spellId === 'lightning_bolt') return;
         for (const wall of vortexWalls) {
           if (wall.checkDeflect(fb)) break;
         }
@@ -1641,19 +1665,38 @@ export class GameScene extends Phaser.Scene {
         fb.setTargets(this.wizards);
       }
 
-      // GravitySphere: apply pull during well phase
-      if (fb.spellId === 'gravity_sphere' && fb.phase === 'well' && fb.alive) {
+      // GravitySphere: apply pull while traveling
+      if (fb.spellId === 'gravity_sphere' && fb.alive) {
         fb.applyPull(this.wizards, delta);
       }
 
+      // Lightning Strike: apply AoE damage when strike phase begins
+      if (fb.spellId === 'lightning_bolt' && fb.phase === 'strike' && fb.struck && fb.alive) {
+        fb.struck = false; // only apply once
+        const hits = fb.applyStrikeDamage(this.wizards);
+        hits.forEach(({ wizard: w, dealt: d }) => {
+          if (d > 0) {
+            w.lastHitBy = fb.ownerPlayerId;
+            if (fb.lifesteal > 0) {
+              const owner = this.wizards.get(fb.ownerPlayerId);
+              if (owner && owner.alive) {
+                owner.health = Math.min(owner.maxHealth, owner.health + d * fb.lifesteal);
+              }
+            }
+          }
+        });
+      }
+
       // Tether: apply pull during tethered phase
-      if (fb.spellId === 'tether' && fb.phase === 'tethered' && fb.alive) {
+      if (fb.spellId === 'tether' && fb.phase === 'tethered') {
         const caster = this.wizards.get(fb.ownerPlayerId);
         const target = this.wizards.get(fb.targetPlayerId);
-        if (caster && target && caster.alive && target.alive) {
+        if (fb.alive && caster && target && caster.alive && target.alive) {
           fb.applyTetherPull(caster, target, delta);
         } else {
           fb.alive = false;
+          // Release tethered target
+          if (target) target.tethered = false;
         }
       }
 
@@ -1672,12 +1715,11 @@ export class GameScene extends Phaser.Scene {
             const dy = fb.y - wizard.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < (fb.radius || 8) * 2 + wizard.radius && Math.random() < wizUpg.reflectChance) {
-              // Reflect: reverse velocity and change owner
               fb.velX = -fb.velX;
               fb.velY = -fb.velY;
               fb.ownerPlayerId = wizard.playerId;
               fb.hitTargets?.clear();
-              return; // skip normal hit check
+              return; // forEach return — skips this wizard's checkHit
             }
           }
         }
@@ -1764,7 +1806,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     // Projectile-vs-projectile collision (different owners only)
-    const noCollideSpells = new Set(['tether', 'vortex_wall', 'mirror_image', 'gravity_sphere', 'swap_projectile']);
+    const noCollideSpells = new Set(['tether', 'vortex_wall', 'mirror_image', 'gravity_sphere', 'swap_projectile', 'lightning_bolt']);
     for (let i = 0; i < this.fireballs.length; i++) {
       const a = this.fireballs[i];
       if (!a.alive || noCollideSpells.has(a.spellId)) continue;
@@ -1779,15 +1821,27 @@ export class GameScene extends Phaser.Scene {
         const dy = a.y - b.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < (a.radius || 5) + (b.radius || 5)) {
-          a.alive = false;
-          b.alive = false;
+          // Ricochet bounces off projectiles instead of being destroyed
+          if (a.spellId === 'ricochet' && a.bouncesRemaining > 0) {
+            a.bouncesRemaining--;
+            a.velX = -a.velX; a.velY = -a.velY; // reverse direction
+            b.alive = false; // destroy the other projectile
+          } else if (b.spellId === 'ricochet' && b.bouncesRemaining > 0) {
+            b.bouncesRemaining--;
+            b.velX = -b.velX; b.velY = -b.velY;
+            a.alive = false;
+          } else {
+            a.alive = false;
+            b.alive = false;
+          }
         }
       }
     }
 
-    // Destroy fireballs that hit the wall
+    // Destroy projectiles that hit the wall (skip stationary AoE spells)
+    const skipWallCheck = new Set(['lightning_bolt', 'vortex_wall']);
     this.fireballs.forEach((fb) => {
-      if (fb.alive && this.arena.isOutsideWall(fb.x, fb.y)) {
+      if (fb.alive && !skipWallCheck.has(fb.spellId) && this.arena.isOutsideWall(fb.x, fb.y)) {
         fb.alive = false;
       }
     });
@@ -2036,16 +2090,28 @@ export class GameScene extends Phaser.Scene {
     const spellId = fbs.spellId || 'fireball';
     switch (spellId) {
       case 'lightning_bolt': {
-        const p = new LightningBolt(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
-        p.velX = fbs.velX || 0;
-        p.velY = fbs.velY || 0;
+        const p = new LightningBolt(this, fbs.x, fbs.y, 0, 0, fbs.ownerPlayerId, fbs);
+        if (fbs.phase) p.phase = fbs.phase;
+        if (fbs.strikeTime) p.strikeTime = fbs.strikeTime;
+        if (fbs.hitTargets) p.hitTargets = new Set(fbs.hitTargets);
+        p.struck = false; // don't re-trigger strike on restore
         return p;
       }
       case 'meteor': {
-        const p = new Meteor(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        const p = new Meteor(this, fbs.x, fbs.y, fbs.rollDirX || fbs.velX || 0, fbs.rollDirY || fbs.velY || 0, fbs.ownerPlayerId, fbs);
+        // Override position and state from serialized data
+        p.x = fbs.x;
+        p.y = fbs.y;
         p.velX = fbs.velX || 0;
         p.velY = fbs.velY || 0;
-        if (fbs.exploded) { p.exploded = true; p.explosionTime = Date.now(); }
+        if (fbs.phase) {
+          p.phase = fbs.phase;
+          if (fbs.landTime) p.landTime = fbs.landTime;
+          if (fbs.rollStartTime) p.rollStartTime = fbs.rollStartTime;
+          if (fbs.landX !== undefined) p.landX = fbs.landX;
+          if (fbs.landY !== undefined) p.landY = fbs.landY;
+        }
+        if (fbs.exploded) { p.phase = 'exploded'; p.exploded = true; p.explosionTime = Date.now(); }
         if (fbs.hitTargets) { p.hitTargets = new Set(fbs.hitTargets); }
         return p;
       }
@@ -2053,7 +2119,6 @@ export class GameScene extends Phaser.Scene {
         const p = new GravitySphere(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
         p.velX = fbs.velX || 0;
         p.velY = fbs.velY || 0;
-        if (fbs.phase === 'well') { p.phase = 'well'; p.wellStartTime = fbs.wellStartTime; p.velX = 0; p.velY = 0; }
         return p;
       }
       case 'homing_missile': {
@@ -2068,6 +2133,7 @@ export class GameScene extends Phaser.Scene {
         p.velX = fbs.velX || 0;
         p.velY = fbs.velY || 0;
         if (fbs.bouncesRemaining !== undefined) p.bouncesRemaining = fbs.bouncesRemaining;
+        if (fbs.bounceCount !== undefined) p.bounceCount = fbs.bounceCount;
         if (fbs.lastHitId) p.lastHitId = fbs.lastHitId;
         return p;
       }
@@ -2102,6 +2168,7 @@ export class GameScene extends Phaser.Scene {
         const p = new SwapProjectile(this, fbs.x, fbs.y, fbs.velX || 0, fbs.velY || 0, fbs.ownerPlayerId, fbs);
         p.velX = fbs.velX || 0;
         p.velY = fbs.velY || 0;
+        if (fbs.targetPlayerId) p.targetPlayerId = fbs.targetPlayerId;
         return p;
       }
       case 'fireball':

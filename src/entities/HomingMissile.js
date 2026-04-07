@@ -71,7 +71,7 @@ export class HomingMissile {
     this.y += this.velY * dt;
 
     this.trail.push({ x: this.x, y: this.y });
-    if (this.trail.length > 10) this.trail.shift();
+    if (this.trail.length > 5) this.trail.shift();
 
     if (Date.now() - this.spawnTime > this.lifetime) {
       this.alive = false;

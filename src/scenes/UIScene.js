@@ -109,6 +109,8 @@ export class UIScene extends Phaser.Scene {
 
     // ---- Shop container (arena mode) ----
     this.shopContainer = this.add.container(w / 2, h / 2).setDepth(65).setVisible(false);
+    this._localReady = false;
+    this._shopReadyCount = { ready: 0, total: 0 };
 
     // ---- Spell slots HUD (arena mode, bottom center) ----
     this.spellSlotsContainer = this.add.container(w / 2, h - 50).setDepth(25).setVisible(false);
@@ -216,6 +218,8 @@ export class UIScene extends Phaser.Scene {
     // Arena mode: shop events
     gameScene.events.on('show-shop', (data) => {
       if (this.gameMode === 'arena') {
+        this._localReady = false;
+        this._shopReadyCount = { ready: 0, total: 0 };
         this._showShop(data);
       }
     });
@@ -245,6 +249,7 @@ export class UIScene extends Phaser.Scene {
     });
 
     gameScene.events.on('shop-ready-update', (data) => {
+      this._shopReadyCount = data;
       if (this._shopReadyText) {
         this._shopReadyText.setText(`${data.ready}/${data.total} Ready`);
       }
@@ -928,6 +933,13 @@ export class UIScene extends Phaser.Scene {
           zone.on('pointerover', () => drawCard(true));
           zone.on('pointerout', () => drawCard(false));
           zone.on('pointerdown', () => {
+            // Immediate visual feedback
+            card.clear();
+            card.fillStyle(0x1a3a1a, 0.95);
+            card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
+            card.lineStyle(2, 0x44ff44, 0.8);
+            card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
+            zone.disableInteractive();
             if (network.isHost) gameScene.submitShopBuySpell(spellId);
             else gameScene.sendShopBuySpell(spellId);
           });
@@ -978,6 +990,12 @@ export class UIScene extends Phaser.Scene {
         zone.on('pointerover', () => drawBCard(true));
         zone.on('pointerout', () => drawBCard(false));
         zone.on('pointerdown', () => {
+          card.clear();
+          card.fillStyle(0x1a3a1a, 0.95);
+          card.fillRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
+          card.lineStyle(2, 0x44ff44, 0.8);
+          card.strokeRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
+          zone.disableInteractive();
           if (network.isHost) gameScene.submitShopBuyBlink(bid);
           else gameScene.sendShopBuyBlink(bid);
         });
@@ -1058,7 +1076,8 @@ export class UIScene extends Phaser.Scene {
     // ---- Ready button ----
     const readyY = Math.max(rowY + 10, h / 2 - 50);
 
-    this._shopReadyText = this.add.text(0, readyY, '0/? Ready', {
+    const rc = this._shopReadyCount;
+    this._shopReadyText = this.add.text(0, readyY, `${rc.ready || 0}/${rc.total || '?'} Ready`, {
       fontSize: '10px', color: '#888',
     }).setOrigin(0.5);
     this.shopContainer.add(this._shopReadyText);
@@ -1067,35 +1086,50 @@ export class UIScene extends Phaser.Scene {
     const btnH = 30;
     const btnY = readyY + 14;
     const readyBtn = this.add.graphics();
-    readyBtn.fillStyle(0x1a6a1a, 0.95);
-    readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-    readyBtn.lineStyle(2, 0x44ff44, 0.7);
-    readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+    const alreadyReady = this._localReady;
+
+    if (alreadyReady) {
+      readyBtn.fillStyle(0x0f3f0f, 0.95);
+      readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+      readyBtn.lineStyle(2, 0x44ff44, 0.4);
+      readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+    } else {
+      readyBtn.fillStyle(0x1a6a1a, 0.95);
+      readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+      readyBtn.lineStyle(2, 0x44ff44, 0.7);
+      readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+    }
     this.shopContainer.add(readyBtn);
 
-    const readyLabel = this.add.text(0, btnY + btnH / 2, 'READY', {
-      fontSize: '12px', color: '#44ff44', fontStyle: 'bold',
+    const readyLabel = this.add.text(0, btnY + btnH / 2, alreadyReady ? 'READY!' : 'READY', {
+      fontSize: '12px', color: alreadyReady ? '#aaffaa' : '#44ff44', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.shopContainer.add(readyLabel);
 
-    const readyZone = this.add.zone(0, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
-    this.shopContainer.add(readyZone);
-    readyZone.on('pointerover', () => {
-      readyBtn.clear();
-      readyBtn.fillStyle(0x228a22, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-      readyBtn.lineStyle(3, 0x44ff44, 1); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-    });
-    readyZone.on('pointerout', () => {
-      readyBtn.clear();
-      readyBtn.fillStyle(0x1a6a1a, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-      readyBtn.lineStyle(2, 0x44ff44, 0.7); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-    });
-    readyZone.on('pointerdown', () => {
-      gameScene.submitShopReady();
-      readyLabel.setText('READY!');
-      readyLabel.setColor('#aaffaa');
-      readyZone.disableInteractive();
-    });
+    if (!alreadyReady) {
+      const readyZone = this.add.zone(0, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
+      this.shopContainer.add(readyZone);
+      readyZone.on('pointerover', () => {
+        readyBtn.clear();
+        readyBtn.fillStyle(0x228a22, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+        readyBtn.lineStyle(3, 0x44ff44, 1); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+      });
+      readyZone.on('pointerout', () => {
+        readyBtn.clear();
+        readyBtn.fillStyle(0x1a6a1a, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+        readyBtn.lineStyle(2, 0x44ff44, 0.7); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+      });
+      readyZone.on('pointerdown', () => {
+        this._localReady = true;
+        gameScene.submitShopReady();
+        readyLabel.setText('READY!');
+        readyLabel.setColor('#aaffaa');
+        readyZone.disableInteractive();
+        readyBtn.clear();
+        readyBtn.fillStyle(0x0f3f0f, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+        readyBtn.lineStyle(2, 0x44ff44, 0.4); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+      });
+    }
   }
 
   _showWinnerWaiting() {

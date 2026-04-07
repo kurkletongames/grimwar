@@ -47,6 +47,7 @@ export class Wizard {
     this.lastHitBy = null; // playerId of last player who damaged us
     this.knockbackResist = 0; // 0-1, reduces incoming knockback
     this.tethered = false; // true when being pulled by tether (disables friction)
+    this.inGravity = false; // true when in gravity sphere pull (reduces friction)
 
     // Rush dash state
     this.dashing = false;
@@ -266,8 +267,8 @@ export class Wizard {
         this.y += this.dashDir.y * dashMove;
         this.dashRemaining -= dashMove;
       }
-    } else {
-      // WASD movement (reduced by slow effect)
+    } else if (!this.tethered) {
+      // WASD movement (disabled while tethered, reduced by slow effect)
       const speedMult = this.slowEffect ? this.slowEffect.factor : 1;
       if (this.inputDir.x !== 0 || this.inputDir.y !== 0) {
         const len = Math.sqrt(this.inputDir.x ** 2 + this.inputDir.y ** 2) || 1;
@@ -280,13 +281,21 @@ export class Wizard {
     this.x += this.knockbackVel.x * dt;
     this.y += this.knockbackVel.y * dt;
 
-    // Apply friction (skip if tethered — no friction during tether pull)
-    if (!this.tethered) {
+    // Apply friction — reduced/disabled by tether and gravity
+    if (this.tethered) {
+      // No friction at all while tethered
+    } else if (this.inGravity) {
+      // Reduced friction while in gravity pull (harder to escape)
+      this.knockbackVel.x *= 0.995;
+      this.knockbackVel.y *= 0.995;
+    } else {
       this.knockbackVel.x *= FRICTION;
       this.knockbackVel.y *= FRICTION;
       if (Math.abs(this.knockbackVel.x) < FRICTION_THRESHOLD) this.knockbackVel.x = 0;
       if (Math.abs(this.knockbackVel.y) < FRICTION_THRESHOLD) this.knockbackVel.y = 0;
     }
+    // Reset gravity flag each frame (set by GravitySphere.applyPull)
+    this.inGravity = false;
 
     // Apply movement
     this.x += moveX;

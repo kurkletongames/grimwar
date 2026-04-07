@@ -183,8 +183,8 @@ export const SPELL_DEFS = {
     shopPrice: 250,
     baseCooldown: 6000,
     baseStats: {
-      speed: 150, damage: 25, knockback: 900, radius: 28,
-      explosionRadius: 100, cooldownReduction: 0,
+      speed: 150, damage: 35, knockback: 2000, radius: 28,
+      explosionRadius: 110, cooldownReduction: 0,
     },
     tiers: {
       1: { title: 'Infernal Impact', desc: 'Damage +8, Explosion +15', price: 75,
@@ -227,7 +227,7 @@ export const SPELL_DEFS = {
     shopPrice: 250,
     baseCooldown: 5000,
     baseStats: {
-      damage: 15, knockback: 1200, strikeRadius: 70, strikeDelay: 500, cooldownReduction: 0,
+      damage: 15, knockback: 3600, strikeRadius: 70, strikeDelay: 650, cooldownReduction: 0,
     },
     tiers: {
       1: { title: 'Overload', desc: 'Damage +5, KB +200, Radius +10', price: 75,

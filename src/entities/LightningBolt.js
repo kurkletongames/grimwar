@@ -18,9 +18,10 @@ export class LightningBolt {
     this.radius = 0; // not a normal projectile for collision
     this.hitTargets = new Set();
 
-    // Target location: some distance ahead in cast direction
+    // Target location: toward cursor, capped at max range
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-    const strikeDist = 160;
+    const maxRange = 240;
+    const strikeDist = Math.min(len, maxRange);
     this.x = x + (dirX / len) * strikeDist;
     this.y = y + (dirY / len) * strikeDist;
     this.velX = 0;
@@ -139,11 +140,12 @@ export class LightningBolt {
         wizard.takeDamage(dmg);
         const dealt = prevHealth - wizard.health;
 
-        // Knockback away from center — massive
+        // Knockback away from center — massive, minimum 50% even at edge
         const kbDir = dist > 0 ? { x: -dx / dist, y: -dy / dist } : { x: 0, y: -1 };
+        const kbStrength = 0.5 + 0.5 * falloff; // 50% at edge, 100% at center
         wizard.applyKnockback(
-          kbDir.x * this.knockback * falloff,
-          kbDir.y * this.knockback * falloff,
+          kbDir.x * this.knockback * kbStrength,
+          kbDir.y * this.knockback * kbStrength,
         );
 
         hits.push({ wizard, dealt });

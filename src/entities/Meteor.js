@@ -23,9 +23,10 @@ export class Meteor {
     this.phase = 'indicator';
     this.landTime = Date.now() + LAND_DELAY;
 
-    // Landing target: some distance ahead in the cast direction
+    // Landing target: toward cursor, capped at max range
     const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-    const landDist = 180;
+    const maxRange = 270;
+    const landDist = Math.min(len, maxRange);
     this.landX = x + (dirX / len) * landDist;
     this.landY = y + (dirY / len) * landDist;
 
@@ -59,6 +60,8 @@ export class Meteor {
         this.velX = this.rollDirX * ROLL_SPEED;
         this.velY = this.rollDirY * ROLL_SPEED;
         this.indicatorGraphics.clear();
+        // Landing impact — signal GameScene to apply AoE damage at landing spot
+        this._landingImpact = true;
       }
       this.draw();
       return;

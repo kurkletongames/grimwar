@@ -996,13 +996,19 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Mirror Image: also fire from active clone's position
+    // Mirror Image: also fire from clone toward cursor position
     if (this.gameMode === 'arena' && spellId === 'fireball') {
+      // Compute cursor world position from wizard pos + direction
+      const cursorX = x + dirX;
+      const cursorY = y + dirY;
       for (const fb of this.fireballs) {
         if (fb.spellId === 'mirror_image' && fb.ownerPlayerId === playerId && fb.alive) {
-          const cloneFireball = new Fireball(this, fb.x, fb.y, dirX, dirY, playerId, stats);
+          // Direction from clone to cursor
+          const cloneDirX = cursorX - fb.x;
+          const cloneDirY = cursorY - fb.y;
+          const cloneFireball = new Fireball(this, fb.x, fb.y, cloneDirX, cloneDirY, playerId, stats);
           this.fireballs.push(cloneFireball);
-          break; // only fire from one clone
+          break;
         }
       }
     }
@@ -1687,6 +1693,17 @@ export class GameScene extends Phaser.Scene {
         });
       }
 
+      // Meteor: landing impact AoE when it first lands
+      if (fb.spellId === 'meteor' && fb._landingImpact) {
+        fb._landingImpact = false;
+        const landingHits = fb.applyExplosionDamage(this.wizards);
+        // Reset hitTargets so the rolling meteor can hit them again on final explosion
+        fb.hitTargets.clear();
+        landingHits.forEach(({ wizard: w, dealt: d }) => {
+          if (d > 0) w.lastHitBy = fb.ownerPlayerId;
+        });
+      }
+
       // Tether: apply pull during tethered phase
       if (fb.spellId === 'tether' && fb.phase === 'tethered') {
         const caster = this.wizards.get(fb.ownerPlayerId);
@@ -1810,12 +1827,13 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < this.fireballs.length; i++) {
       const a = this.fireballs[i];
       if (!a.alive || noCollideSpells.has(a.spellId)) continue;
-      // Tethered tethers are immune
       if (a.spellId === 'tether' && a.phase === 'tethered') continue;
+      if (a.spellId === 'meteor' && a.phase === 'indicator') continue;
       for (let j = i + 1; j < this.fireballs.length; j++) {
         const b = this.fireballs[j];
         if (!b.alive || noCollideSpells.has(b.spellId)) continue;
         if (b.spellId === 'tether' && b.phase === 'tethered') continue;
+        if (b.spellId === 'meteor' && b.phase === 'indicator') continue;
         if (a.ownerPlayerId === b.ownerPlayerId) continue;
         const dx = a.x - b.x;
         const dy = a.y - b.y;

@@ -77,8 +77,6 @@ export class Ricochet {
 
   checkHit(wizard) {
     if (!this.alive || !wizard.alive) return 0;
-    // Skip the caster for DAMAGE (but can bounce TO caster)
-    if (wizard.playerId === this.ownerPlayerId) return 0;
     // Don't re-hit the same target immediately
     if (wizard.playerId === this.lastHitId) return 0;
 
@@ -87,15 +85,23 @@ export class Ricochet {
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     if (dist < this.radius * 2 + wizard.radius) {
-      const prevHealth = wizard.health;
-      wizard.takeDamage(this.damage);
-      const dealt = prevHealth - wizard.health;
-
+      const isCaster = wizard.playerId === this.ownerPlayerId;
       const dirLen = Math.sqrt(this.velX ** 2 + this.velY ** 2) || 1;
-      wizard.applyKnockback(
-        (this.velX / dirLen) * this.knockback,
-        (this.velY / dirLen) * this.knockback,
-      );
+
+      if (isCaster) {
+        // Bounce off caster: small knockback, no damage
+        wizard.applyKnockback(
+          (this.velX / dirLen) * this.knockback * 0.3,
+          (this.velY / dirLen) * this.knockback * 0.3,
+        );
+      } else {
+        // Hit enemy: full damage + knockback
+        wizard.takeDamage(this.damage);
+        wizard.applyKnockback(
+          (this.velX / dirLen) * this.knockback,
+          (this.velY / dirLen) * this.knockback,
+        );
+      }
 
       this.lastHitId = wizard.playerId;
       this.lastHitWizard = wizard;
@@ -105,7 +111,7 @@ export class Ricochet {
       } else {
         this.alive = false;
       }
-      return dealt;
+      return isCaster ? 0 : (wizard.alive ? this.damage : this.damage);
     }
     return 0;
   }

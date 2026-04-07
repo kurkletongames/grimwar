@@ -121,8 +121,10 @@ export class GravitySphere {
         const nx = dx / dist;
         const ny = dy / dist;
 
-        // Strong pull — apply directly to knockback velocity to overcome friction
-        // The closer to center, the stronger the pull
+        // Mark wizard as in gravity (reduces friction in Wizard.update)
+        wizard.inGravity = true;
+
+        // Strong pull — apply directly to knockback velocity
         const pullForce = this.pullStrength * (0.3 + factor * 0.7) * dt;
         wizard.knockbackVel.x += nx * pullForce;
         wizard.knockbackVel.y += ny * pullForce;

@@ -138,20 +138,98 @@ export class Tether {
       return;
     }
 
-    const nx = dx / dist;
-    const ny = dy / dist;
-
-    // Mark target as tethered (disables friction on their knockback)
+    // Mark target as tethered (disables normal friction + WASD)
     target.tethered = true;
 
-    // Strong velocity pull — scales with distance, no friction to fight
-    const distFactor = Math.min(3, dist / 60);
-    const velPull = this.pullForce * distFactor * dt;
-    target.knockbackVel.x += nx * velPull;
-    target.knockbackVel.y += ny * velPull;
+    // Initialize leash length on first frame
+    if (!this._leashLength) {
+      this._leashLength = dist;
+    }
+    // Max leash — knockback can stretch it, but not beyond this
+    const maxLeash = this.tetherRange * 1.5;
+    // Slowly shorten the leash over time (reel in)
+    this._leashLength = Math.max(30, this._leashLength - 15 * dt);
 
-    // Direct position yank — bypasses everything
-    const directPull = this.pullForce * 0.4 * distFactor * dt;
+    const nx = dx / dist; // toward caster
+    const ny = dy / dist;
+    const tx = -ny; // tangential (perpendicular)
+    const ty = nx;
+
+    // Distance intensity — further from caster = stronger all forces
+    // 1x at 50px, 2x at 150px, 3x at 250px+
+    const distIntensity = Math.min(3, 0.5 + dist / 100);
+
+    // Decompose target velocity into radial and tangential components
+    const velRadial = target.knockbackVel.x * nx + target.knockbackVel.y * ny;
+    const velTangent = target.knockbackVel.x * tx + target.knockbackVel.y * ty;
+
+    // Track caster movement to impart swing momentum (scales with distance)
+    if (this._lastCasterX !== undefined) {
+      const casterDx = caster.x - this._lastCasterX;
+      const casterDy = caster.y - this._lastCasterY;
+
+      // Caster tangential movement → amplified swing on target
+      const tangentInput = casterDx * tx + casterDy * ty;
+      target.knockbackVel.x += tx * tangentInput * 4.0 * distIntensity;
+      target.knockbackVel.y += ty * tangentInput * 4.0 * distIntensity;
+
+      // Caster radial movement transfers partially
+      const radialInput = casterDx * nx + casterDy * ny;
+      target.knockbackVel.x += nx * radialInput * 0.6;
+      target.knockbackVel.y += ny * radialInput * 0.6;
+    }
+    this._lastCasterX = caster.x;
+    this._lastCasterY = caster.y;
+
+    // Apply light tangential damping (preserves orbit but prevents runaway spin)
+    const tangentDamp = 0.97;
+    const newTangent = velTangent * tangentDamp;
+    // Reconstruct velocity with damped tangent but keep radial as-is for now
+    target.knockbackVel.x = nx * velRadial + tx * newTangent;
+    target.knockbackVel.y = ny * velRadial + ty * newTangent;
+
+    // Leash constraint — knockback stretches the leash a bit, then converts to orbital spin
+    if (dist > this._leashLength) {
+      // Allow small stretch from knockback (up to max leash)
+      if (dist < maxLeash) {
+        // Stretch the leash to match current distance
+        this._leashLength = dist;
+      } else {
+        // At max leash — snap position back and convert radial KB to tangential (orbital)
+        target.x = caster.x - nx * maxLeash;
+        target.y = caster.y - ny * maxLeash;
+
+        // Convert outward radial velocity into tangential spin (like arena wall)
+        if (velRadial < 0) { // moving away from caster
+          const outwardSpeed = -velRadial;
+          // Remove the radial component
+          target.knockbackVel.x -= nx * velRadial;
+          target.knockbackVel.y -= ny * velRadial;
+          // Add as tangential velocity (spin around caster), preserve 85% energy
+          const existingTangent = Math.sqrt(
+            (target.knockbackVel.x) ** 2 + (target.knockbackVel.y) ** 2
+          );
+          const totalSpeed = Math.sqrt(existingTangent ** 2 + outwardSpeed ** 2);
+          if (existingTangent > 0.1) {
+            const scale = totalSpeed / existingTangent * 0.85;
+            target.knockbackVel.x *= scale;
+            target.knockbackVel.y *= scale;
+          } else {
+            // No existing tangent — pick a spin direction (clockwise)
+            target.knockbackVel.x += tx * outwardSpeed * 0.85;
+            target.knockbackVel.y += ty * outwardSpeed * 0.85;
+          }
+        }
+      }
+    }
+
+    // Inward pull — scales with distance (blink away = get yanked back hard)
+    const pullInward = this.pullForce * 0.06 * distIntensity * dt;
+    target.knockbackVel.x += nx * pullInward;
+    target.knockbackVel.y += ny * pullInward;
+
+    // Direct position pull also scales with distance
+    const directPull = this.pullForce * 0.02 * distIntensity * dt;
     target.x += nx * directPull;
     target.y += ny * directPull;
 

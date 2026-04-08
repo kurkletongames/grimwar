@@ -325,6 +325,7 @@ export const BLINK_IDS = ['rush', 'extended_blink', 'swap'];
 /** Global (non-spell) upgrades available in arena shop */
 export const GLOBAL_UPGRADES = [
   { id: 'shop_hp', title: 'Fortify', desc: 'Max HP +15', price: 75, apply: (g) => { g.bonusHp += 15; } },
+  { id: 'shop_speed', title: 'Swift Feet', desc: 'Movement speed +12', price: 75, apply: (g) => { g.bonusSpeed = (g.bonusSpeed || 0) + 12; } },
 ];
 
 /** Create a fresh spell stats object (copy of base stats) */

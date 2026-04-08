@@ -1,4 +1,4 @@
-const WELL_DPS_PCT = 0.12; // 12% max HP per second drain while in pull radius
+const WELL_DPS_PCT = 0.01; // 1% max HP per second drain while in pull radius
 
 export class GravitySphere {
   constructor(scene, x, y, dirX, dirY, ownerPlayerId, stats = {}) {

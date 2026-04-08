@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { network } from '../network/NetworkManager.js';
 import { LobbyManager } from '../network/LobbyManager.js';
-import { Arena } from '../entities/Arena.js';
+import { Arena, THEME_NAMES } from '../entities/Arena.js';
 import { Wizard } from '../entities/Wizard.js';
 import {
   Fireball,
@@ -22,6 +22,8 @@ import { VortexWall } from '../entities/VortexWall.js';
 import { SwapProjectile } from '../entities/SwapProjectile.js';
 import { SPELL_DEFS, BLINK_DEFS, GLOBAL_UPGRADES, SPELL_CATEGORIES, SLOT_KEYS, SPELLS_BY_CATEGORY, BLINK_IDS, MAX_SPELL_SLOTS, MAX_TIER, createBaseSpellStats, createBaseBlinkStats, createBaseGlobalUpgrades } from '../data/SpellDefinitions.js';
 import { GoldManager } from '../systems/GoldManager.js';
+import { pickVoteOptions, tallyVotes, getModifier } from '../systems/RoundModifiers.js';
+import { HazardManager } from '../systems/EnvironmentalHazards.js';
 
 const TICK_RATE = 1000 / 30; // 30 ticks per second for smoother sync
 const ROUND_END_DELAY = 2000; // ms before showing power-up screen
@@ -210,6 +212,15 @@ export class GameScene extends Phaser.Scene {
     this.spellCastTimes = new Map(); // 'playerId-spellId' -> last cast timestamp
     this.shopOpen = false;
 
+    // Round modifiers (roguelike)
+    this.activeModifier = null;
+    this._modifierVotes = {};
+    this._modifierOptions = [];
+
+    // Kill/death tracking + bounty
+    this.killStats = new Map(); // playerId -> { kills, deaths, streak }
+    this.bountyTarget = null; // playerId of player with highest streak
+
     // Input — disable capture so HTML inputs (lobby name) still work
     this.keys = this.input.keyboard.addKeys({
       W: Phaser.Input.Keyboard.KeyCodes.W,
@@ -234,6 +245,14 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-TWO', () => this._switchSpell(1));
     this.input.keyboard.on('keydown-THREE', () => this._switchSpell(2));
     this.input.keyboard.on('keydown-FOUR', () => this._switchSpell(3));
+
+    // Secret sparkle (Shift+Q)
+    this.input.keyboard.on('keydown-Q', (e) => {
+      if (e.shiftKey) {
+        const wizard = this.wizards.get(this.localPlayerId);
+        if (wizard) wizard.sparkle = !wizard.sparkle;
+      }
+    });
 
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -260,6 +279,24 @@ export class GameScene extends Phaser.Scene {
     };
     network.onStartRound = () => {
       this._startRound();
+    };
+
+    // Roguelike: sync other players' upgrades to this client
+    network.onUpgradeApplied = (data) => {
+      if (data.peerId && data.upgradeId) {
+        // Skip if this is our own upgrade (already applied locally in _selectUpgrade)
+        if (data.peerId === this.localPlayerId) return;
+        this.applyUpgrade(data.peerId, data.upgradeId);
+      }
+    };
+
+    // Modifier vote messages (roguelike, client side)
+    network.onShowModifierVote = (data) => {
+      this.events.emit('show-modifier-vote', data);
+    };
+    network.onModifierResult = (data) => {
+      this.activeModifier = data.modifier;
+      this.events.emit('modifier-result', data);
     };
 
     // Shop messages (arena mode, client side)
@@ -297,6 +334,9 @@ export class GameScene extends Phaser.Scene {
       network.onShowUpgrades = null;
       network.onUpgradeStatus = null;
       network.onStartRound = null;
+      network.onUpgradeApplied = null;
+      network.onShowModifierVote = null;
+      network.onModifierResult = null;
       network.onShowShop = null;
       network.onShopClosed = null;
       network.onShopUpdate = null;
@@ -438,6 +478,11 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.winsToWin = DEFAULT_WINS_TO_WIN;
+
+    // Init kill stats
+    data.players.forEach((p) => {
+      this.killStats.set(p.peerId, { kills: 0, deaths: 0, streak: 0 });
+    });
 
     this.scene.launch('UIScene');
 
@@ -733,6 +778,85 @@ export class GameScene extends Phaser.Scene {
     return this.goldManager.serialize();
   }
 
+  // ---- Round Modifier Voting (roguelike) ----
+
+  _startModifierVote() {
+    this._modifierOptions = pickVoteOptions(3);
+    this._modifierVotes = {};
+    this._modifierVoteResolved = false;
+
+    const voteData = {
+      options: this._modifierOptions.map((m) => ({ id: m.id, name: m.name, desc: m.desc, color: m.color, icon: m.icon })),
+    };
+
+    this.events.emit('show-modifier-vote', voteData);
+    if (!this.testMode) {
+      network.broadcastToClients({ type: 'show-modifier-vote', ...voteData });
+    }
+
+    // Auto-resolve after 10s no matter what
+    this._modifierVoteTimeout = setTimeout(() => {
+      this._resolveModifierVote();
+    }, 10000);
+  }
+
+  _handleModifierVote(peerId, modifierId) {
+    if (this._modifierVoteResolved) return;
+    if (!this._modifierOptions.find((m) => m.id === modifierId)) return;
+    this._modifierVotes[peerId] = modifierId;
+
+    // In test mode, resolve immediately when the human votes (bots don't need to vote)
+    if (this.testMode) {
+      this._resolveModifierVote();
+      return;
+    }
+
+    // In multiplayer, check if all humans voted
+    const allVoted = this.playerInfo.every((p) =>
+      p.peerId.startsWith('bot-') || this._modifierVotes[p.peerId]
+    );
+    if (allVoted) this._resolveModifierVote();
+  }
+
+  submitModifierVote(modifierId) {
+    if (network.isHost) {
+      this._handleModifierVote(this.localPlayerId, modifierId);
+    } else {
+      network.sendInput({ type: 'input', action: 'modifier-vote', modifierId });
+    }
+  }
+
+  _resolveModifierVote() {
+    if (this._modifierVoteResolved) return; // prevent double-resolve
+    this._modifierVoteResolved = true;
+
+    if (this._modifierVoteTimeout) {
+      clearTimeout(this._modifierVoteTimeout);
+      this._modifierVoteTimeout = null;
+    }
+
+    // If no votes, default to 'none'
+    const winnerId = Object.keys(this._modifierVotes).length > 0
+      ? tallyVotes(this._modifierVotes) : 'none';
+    this.activeModifier = getModifier(winnerId);
+
+    this.events.emit('modifier-result', { modifier: this.activeModifier });
+    if (!this.testMode) {
+      network.broadcastToClients({ type: 'modifier-result', modifier: {
+        id: this.activeModifier.id, name: this.activeModifier.name,
+        desc: this.activeModifier.desc, color: this.activeModifier.color, icon: this.activeModifier.icon,
+      }});
+    }
+
+    // Brief pause to show result, then start round
+    setTimeout(() => {
+      this._startRound();
+      if (!this.testMode) {
+        network.broadcastToClients({ type: 'game-start-round' });
+      }
+    }, 1500);
+  }
+
   _cancelPendingTimers() {
     if (this._pendingTimers) {
       this._pendingTimers.forEach((t) => t.remove(false));
@@ -741,6 +865,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   _startRound() {
+    console.log('[GrimWar] _startRound called, round:', this.roundNumber + 1);
+    try {
     this._cancelPendingTimers();
     this.roundNumber++;
     this.roundOver = false;
@@ -756,9 +882,10 @@ export class GameScene extends Phaser.Scene {
     this.shopOpen = false;
     this.botIds.forEach((botId) => { this.botLastFireball[botId] = 0; });
 
-    // Destroy lingering tween graphics
+    // Kill all active tweens and destroy lingering VFX graphics
+    this.tweens.killAll();
     if (this._blinkFxList) {
-      this._blinkFxList.forEach((g) => { if (g && g.active) g.destroy(); });
+      this._blinkFxList.forEach((g) => { try { if (g && g.active) g.destroy(); } catch (e) {} });
     }
     this._blinkFxList = [];
 
@@ -773,7 +900,25 @@ export class GameScene extends Phaser.Scene {
     const cy = this.cameras.main.height / 2;
     if (this.arena) this.arena.destroy();
     this.arena = new Arena(this, cx, cy);
+    // Deterministic theme based on round number (same on host + all clients)
+    // Roguelike: cycle themes each round. Arena: always standard.
+    if (this.gameMode === 'arena') {
+      this.arena.setTheme('standard');
+    } else {
+      this.arena.setTheme(THEME_NAMES[(this.roundNumber - 1) % THEME_NAMES.length]);
+    }
     this.arena.startRound();
+
+    // Environmental hazards (roguelike only — host spawns, all render)
+    if (this.hazardManager) this.hazardManager.destroy();
+    this.hazardManager = null;
+    if (this.gameMode === 'roguelike') {
+      this.hazardManager = new HazardManager(this);
+      if (!network.isHost) {
+        // Clients don't spawn hazards, only render from synced state
+        this.hazardManager.nextSpawnTime = Infinity;
+      }
+    }
 
     // Spawn wizards
     const spawnRadius = 300;
@@ -781,7 +926,7 @@ export class GameScene extends Phaser.Scene {
       const angle = (index / this.playerInfo.length) * Math.PI * 2 - Math.PI / 2;
       const x = cx + Math.cos(angle) * spawnRadius;
       const y = cy + Math.sin(angle) * spawnRadius;
-      const wizard = new Wizard(this, x, y, player.peerId, player.name, index);
+      const wizard = new Wizard(this, x, y, player.peerId, player.name, index, player.cosmetics);
       let bonusHp = 0;
       if (this.gameMode === 'arena') {
         const spellData = this.playerSpellData.get(player.peerId);
@@ -794,6 +939,12 @@ export class GameScene extends Phaser.Scene {
         wizard.maxHealth = Math.max(20, wizard.maxHealth + bonusHp);
         wizard.health = wizard.maxHealth;
       }
+      // Apply arena speed bonus
+      if (this.gameMode === 'arena') {
+        const spellData = this.playerSpellData.get(player.peerId);
+        const bonusSpeed = spellData ? spellData.globalUpgrades.bonusSpeed || 0 : 0;
+        if (bonusSpeed > 0) wizard.bonusSpeed = bonusSpeed;
+      }
       // Apply roguelike knockback resistance
       if (this.gameMode !== 'arena') {
         const upgrades = this.playerUpgrades.get(player.peerId);
@@ -803,6 +954,43 @@ export class GameScene extends Phaser.Scene {
       }
       this.wizards.set(player.peerId, wizard);
     });
+
+    // Apply active round modifier
+    const mod = this.activeModifier;
+    if (mod && mod.id !== 'none' && this.gameMode === 'roguelike') {
+      // Glass Round: override HP
+      if (mod.maxHpOverride) {
+        this.wizards.forEach((w) => {
+          w.maxHealth = mod.maxHpOverride;
+          w.health = w.maxHealth;
+        });
+      }
+      // Big Head Mode: double wizard radius
+      if (mod.wizardRadiusMult) {
+        this.wizards.forEach((w) => { w.radius *= mod.wizardRadiusMult; });
+      }
+      // Speed Demon: boost wizard speed
+      if (mod.speedMult) {
+        this.wizards.forEach((w) => { w.bonusSpeed += 85 * (mod.speedMult - 1); });
+      }
+      // Low Gravity / Mirror Match: store on wizards
+      if (mod.knockbackMult) {
+        this.wizards.forEach((w) => { w._modKnockbackMult = mod.knockbackMult; });
+      }
+      if (mod.frictionOverride) {
+        this.wizards.forEach((w) => { w._modFrictionOverride = mod.frictionOverride; });
+      }
+      if (mod.reverseKnockback) {
+        this.wizards.forEach((w) => { w._modReverseKB = true; });
+      }
+      // Sudden Death: modify arena
+      if (mod.shrinkDelay !== undefined) {
+        this.arena.shrinkDelay = mod.shrinkDelay;
+      }
+      if (mod.shrinkRateMult) {
+        this.arena.shrinkRate *= mod.shrinkRateMult;
+      }
+    }
 
     this.events.emit('round-start', this.roundNumber);
 
@@ -816,6 +1004,10 @@ export class GameScene extends Phaser.Scene {
         this.events.emit('countdown', 0);
       }),
     );
+    console.log('[GrimWar] _startRound complete, arena:', !!this.arena, 'wizards:', this.wizards.size);
+    } catch (e) {
+      console.error('[GrimWar] _startRound CRASHED:', e);
+    }
   }
 
   _getFireballCooldown(playerId) {
@@ -831,6 +1023,11 @@ export class GameScene extends Phaser.Scene {
         const speedMult = 1 + (1 - hpPct) * 2; // 1x at full, 3x at 0
         cd = Math.max(300, cd / speedMult);
       }
+    }
+
+    // Speed Demon modifier: halve cooldowns
+    if (this.activeModifier && this.activeModifier.cooldownMult) {
+      cd = Math.max(250, cd * this.activeModifier.cooldownMult);
     }
 
     return cd;
@@ -1072,6 +1269,16 @@ export class GameScene extends Phaser.Scene {
     }
     this.playerFireballTimes.set(playerId, Date.now());
 
+    // Big Head Mode: double projectile radius
+    if (this.activeModifier && this.activeModifier.projectileRadiusMult) {
+      const mult = this.activeModifier.projectileRadiusMult;
+      this.fireballs.forEach((fb) => {
+        if (fb.ownerPlayerId === playerId && fb.radius) {
+          fb.radius *= mult;
+        }
+      });
+    }
+
     // Self-knockback (Glass Cannon)
     if (stats.selfKnockback > 0) {
       const wizard = this.wizards.get(playerId);
@@ -1282,15 +1489,16 @@ export class GameScene extends Phaser.Scene {
 
     this.arena.constrainToWall(wizard);
 
-    // Afterimage
+    // Afterimage (tracked for cleanup)
     const fx = this.add.graphics();
+    this._blinkFxList.push(fx);
     fx.fillStyle(0x4fc3f7, 0.5);
     fx.fillCircle(oldX, oldY, wizard.radius);
     this.tweens.add({
       targets: fx,
       alpha: 0,
       duration: 300,
-      onComplete: () => fx.destroy(),
+      onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); },
     });
 
     wizard.draw();
@@ -1330,6 +1538,10 @@ export class GameScene extends Phaser.Scene {
     }
     if (data.action === 'shop-ready') {
       this._handleShopReady(peerId);
+      return;
+    }
+    if (data.action === 'modifier-vote') {
+      this._handleModifierVote(peerId, data.modifierId);
       return;
     }
 
@@ -1405,12 +1617,27 @@ export class GameScene extends Phaser.Scene {
       wizard.update(delta);
     });
 
+    // Clean up dead projectiles on client side
+    this.fireballs = this.fireballs.filter((fb) => {
+      if (!fb.alive) { fb.destroy(); return false; }
+      return true;
+    });
+
     // Move fireballs locally using their velocity (no trail/lifetime — host handles that)
     const dt = delta / 1000;
     this.fireballs.forEach((fb) => {
-      if (!fb.alive) return;
       fb.x += fb.velX * dt;
       fb.y += fb.velY * dt;
+
+      // Client-side tether beam position update
+      if (fb.spellId === 'tether' && fb.phase === 'tethered' && fb.targetPlayerId) {
+        const caster = this.wizards.get(fb.ownerPlayerId);
+        const target = this.wizards.get(fb.targetPlayerId);
+        if (caster && target && fb.setCasterTarget) {
+          fb.setCasterTarget({ x: caster.x, y: caster.y }, { x: target.x, y: target.y });
+        }
+      }
+
       fb.draw();
     });
 
@@ -1527,6 +1754,63 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  _onWizardKill(killerId, victim) {
+    if (!killerId || !victim) return;
+    // Prevent double-counting the same death in one frame
+    if (this._killedThisFrame && this._killedThisFrame.has(victim.playerId)) return;
+    if (this._killedThisFrame) this._killedThisFrame.add(victim.playerId);
+
+    // Gold (arena only)
+    if (this.gameMode === 'arena') {
+      this.goldManager.awardKillGold(killerId);
+    }
+
+    // Track kills/deaths
+    const killerStats = this.killStats.get(killerId);
+    const victimStats = this.killStats.get(victim.playerId);
+    if (killerStats) { killerStats.kills++; killerStats.streak++; }
+    if (victimStats) { victimStats.deaths++; victimStats.streak = 0; }
+
+    // Bounty: killing the bounty target gives bonus gold
+    if (this.gameMode === 'arena' && this.bountyTarget === victim.playerId) {
+      this.goldManager.gold.set(killerId, (this.goldManager.getGold(killerId) || 0) + 100);
+      this.bountyTarget = null;
+    }
+
+    // Update bounty target (highest streak >= 3)
+    let maxStreak = 2;
+    let newBounty = null;
+    this.killStats.forEach((stats, pid) => {
+      if (stats.streak > maxStreak) { maxStreak = stats.streak; newBounty = pid; }
+    });
+    this.bountyTarget = newBounty;
+
+    // Death burst VFX (using tweens for auto-cleanup)
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2;
+      const dist = 40 + Math.random() * 50;
+      const particle = this.add.graphics();
+      const size = 3 + Math.random() * 3;
+      particle.fillStyle(victim.color, 0.9);
+      particle.fillCircle(victim.x, victim.y, size);
+      this.tweens.add({
+        targets: particle,
+        x: Math.cos(angle) * dist,
+        y: Math.sin(angle) * dist,
+        alpha: 0,
+        scaleX: 0.3,
+        scaleY: 0.3,
+        duration: 400 + Math.random() * 200,
+        onComplete: () => particle.destroy(),
+      });
+    }
+
+    // Emit kill event for UI
+    const killerName = this.playerInfo.find((p) => p.peerId === killerId)?.name || 'Unknown';
+    const victimName = victim.playerName;
+    this.events.emit('player-kill', { killerName, victimName, killerId, victimId: victim.playerId });
+  }
+
   _checkWizardCollisions() {
     const wizardList = Array.from(this.wizards.values()).filter((w) => w.alive);
     for (let i = 0; i < wizardList.length; i++) {
@@ -1581,8 +1865,14 @@ export class GameScene extends Phaser.Scene {
   _hostUpdate(delta) {
     if (this.testMode) this._updateBots();
     if (!this.arena) return;
+    this._killedThisFrame = new Set(); // prevent double kill credit
 
     this.arena.update(delta);
+
+    // Environmental hazards
+    if (this.hazardManager) {
+      this.hazardManager.update(delta, this.wizards, this.arena);
+    }
 
     const now = Date.now();
     this.wizards.forEach((wizard) => {
@@ -1754,8 +2044,9 @@ export class GameScene extends Phaser.Scene {
                   owner.health = Math.min(owner.maxHealth, owner.health + d * fb.lifesteal);
                 }
               }
-              if (wasAlive && !w.alive && this.gameMode === 'arena') {
-                this.goldManager.awardKillGold(fb.ownerPlayerId);
+              // Each explosion victim tracked independently (not using wasAlive from trigger wizard)
+              if (!w.alive) {
+                this._onWizardKill(fb.ownerPlayerId, w);
               }
             }
           });
@@ -1775,10 +2066,12 @@ export class GameScene extends Phaser.Scene {
           // Track last hit for lava kill credit
           wizard.lastHitBy = fb.ownerPlayerId;
 
-          if (fb.lifesteal > 0) {
+          // Lifesteal (from upgrade + vampire modifier)
+          const totalLifesteal = (fb.lifesteal || 0) + (this.activeModifier?.globalLifesteal || 0);
+          if (totalLifesteal > 0) {
             const owner = this.wizards.get(fb.ownerPlayerId);
             if (owner && owner.alive) {
-              owner.health = Math.min(owner.maxHealth, owner.health + dealt * fb.lifesteal);
+              owner.health = Math.min(owner.maxHealth, owner.health + dealt * totalLifesteal);
             }
           }
 
@@ -1802,16 +2095,18 @@ export class GameScene extends Phaser.Scene {
                 }
               }
             });
-            // Explosion VFX
+            // Explosion VFX (tracked for cleanup)
             const fx = this.add.graphics();
+            this._blinkFxList.push(fx);
             fx.lineStyle(2, 0xff6600, 0.6);
             fx.strokeCircle(fb.x, fb.y, 5);
-            this.tweens.add({ targets: fx, scaleX: aoeR / 5, scaleY: aoeR / 5, alpha: 0, duration: 300, onComplete: () => fx.destroy() });
+            this.tweens.add({ targets: fx, scaleX: aoeR / 5, scaleY: aoeR / 5, alpha: 0, duration: 300,
+              onComplete: () => { fx.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== fx); } });
           }
 
-          // Kill credit
-          if (wasAlive && !wizard.alive && this.gameMode === 'arena') {
-            this.goldManager.awardKillGold(fb.ownerPlayerId);
+          // Kill credit + effects
+          if (wasAlive && !wizard.alive) {
+            this._onWizardKill(fb.ownerPlayerId, wizard);
           }
         }
       });
@@ -1878,13 +2173,11 @@ export class GameScene extends Phaser.Scene {
     this.arena.applyLavaDamage(this.wizards, delta);
 
     // Award kill gold if someone died to lava and had a lastHitBy
-    if (this.gameMode === 'arena') {
-      this.wizards.forEach((w) => {
-        if (preLavaAlive.get(w.playerId) && !w.alive && w.lastHitBy) {
-          this.goldManager.awardKillGold(w.lastHitBy);
-        }
-      });
-    }
+    this.wizards.forEach((w) => {
+      if (preLavaAlive.get(w.playerId) && !w.alive && w.lastHitBy) {
+        this._onWizardKill(w.lastHitBy, w);
+      }
+    });
 
     // Check round end
     const aliveWizards = Array.from(this.wizards.values()).filter((w) => w.alive);
@@ -1999,6 +2292,12 @@ export class GameScene extends Phaser.Scene {
     if (!this._upgradesPending || !this._upgradesPending.has(peerId)) return;
     this.applyUpgrade(peerId, upgradeId);
     this._upgradesPending.delete(peerId);
+
+    // Broadcast to all clients so they update their local playerUpgrades
+    if (!this.testMode) {
+      network.broadcastToClients({ type: 'upgrade-applied', peerId, upgradeId });
+    }
+
     this._checkAllUpgradesPicked();
   }
 
@@ -2008,6 +2307,12 @@ export class GameScene extends Phaser.Scene {
     if (this._upgradesPending) {
       this._upgradesPending.delete(this.localPlayerId);
     }
+
+    // Broadcast host's own upgrade to clients
+    if (!this.testMode) {
+      network.broadcastToClients({ type: 'upgrade-applied', peerId: this.localPlayerId, upgradeId });
+    }
+
     this._checkAllUpgradesPicked();
   }
 
@@ -2040,15 +2345,18 @@ export class GameScene extends Phaser.Scene {
     }
     this.events.emit('upgrade-waiting', { remaining: 0, total: 0 });
 
-    // Brief delay then start
-    this._pendingTimers.push(
-      this.time.delayedCall(500, () => {
+    // In roguelike mode, go to modifier vote before starting round
+    // Use setTimeout since roundOver=true freezes Phaser timers
+    if (this.gameMode === 'roguelike' && this.roundNumber > 0) {
+      setTimeout(() => this._startModifierVote(), 500);
+    } else {
+      setTimeout(() => {
         this._startRound();
         if (!this.testMode) {
           network.broadcastToClients({ type: 'game-start-round' });
         }
-      })
-    );
+      }, 500);
+    }
   }
 
   _autoPickForRemaining() {
@@ -2200,12 +2508,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   _broadcastGameState() {
+    const killStatsObj = {};
+    this.killStats.forEach((v, k) => { killStatsObj[k] = v; });
+
     const state = {
       type: 'game-state',
       arena: this.arena.serialize(),
       wizards: Array.from(this.wizards.values()).map((w) => w.serialize()),
       fireballs: this.fireballs.map((fb) => fb.serialize()),
       scores: Object.fromEntries(this.scores),
+      killStats: killStatsObj,
+      bountyTarget: this.bountyTarget,
+      hazards: this.hazardManager ? this.hazardManager.serialize() : [],
     };
     network.broadcastToClients(state);
   }
@@ -2218,6 +2532,17 @@ export class GameScene extends Phaser.Scene {
       for (const [pid, score] of Object.entries(data.scores)) {
         this.scores.set(pid, score);
       }
+    }
+
+    // Sync kill stats, bounty, hazards
+    if (data.killStats) {
+      for (const [pid, stats] of Object.entries(data.killStats)) {
+        this.killStats.set(pid, stats);
+      }
+    }
+    if (data.bountyTarget !== undefined) this.bountyTarget = data.bountyTarget;
+    if (data.hazards && this.hazardManager) {
+      this.hazardManager.applyState(data.hazards);
     }
 
     if (this.roundOver) return;

@@ -33,6 +33,12 @@ export class NetworkManager {
     this.onShopClosed = null;
     this.onShopUpdate = null;
     this.onShopReadyUpdate = null;
+    this.onShowUpgrades = null;
+    this.onUpgradeStatus = null;
+    this.onStartRound = null;
+    this.onUpgradeApplied = null;
+    this.onShowModifierVote = null;
+    this.onModifierResult = null;
   }
 
   _generateCode() {
@@ -287,6 +293,15 @@ export class NetworkManager {
           break;
         case 'game-start-round':
           if (this.onStartRound) this.onStartRound(data);
+          break;
+        case 'show-modifier-vote':
+          if (this.onShowModifierVote) this.onShowModifierVote(data);
+          break;
+        case 'modifier-result':
+          if (this.onModifierResult) this.onModifierResult(data);
+          break;
+        case 'upgrade-applied':
+          if (this.onUpgradeApplied) this.onUpgradeApplied(data);
           break;
         case 'show-shop':
           if (this.onShowShop) this.onShowShop(data);

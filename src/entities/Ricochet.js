@@ -21,7 +21,7 @@ export class Ricochet {
 
     this.bouncesRemaining = this.maxBounces;
     this.bounceCount = 0;
-    this.lastHitId = null;
+    this.lastHitId = ownerPlayerId; // skip caster on first frame (spawns at caster's position)
     this.needsRedirect = false;
     this.lastHitWizard = null;
 

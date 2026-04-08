@@ -82,6 +82,13 @@ export class UIScene extends Phaser.Scene {
       fontSize: '11px', color: '#555',
     }).setOrigin(1, 0).setDepth(20);
 
+    // ---- Kill feed (top right) ----
+    this._killFeed = [];
+    this._killFeedTexts = [];
+
+    // ---- KD Scoreboard (shown on TAB alongside upgrades) ----
+    this._kdTexts = [];
+
     // ---- Escape menu ----
     this.escMenuContainer = this.add.container(w / 2, h / 2).setDepth(80).setVisible(false);
     this.escMenuVisible = false;
@@ -148,7 +155,14 @@ export class UIScene extends Phaser.Scene {
     });
 
     gameScene.events.on('round-start', (roundNum) => {
-      this.roundText.setText(`Round ${roundNum}`);
+      const modLabel = this._activeModifierName && this._activeModifierName !== 'No Modifier'
+        ? ` — ${this._activeModifierName}` : '';
+      this.roundText.setText(`Round ${roundNum}${modLabel}`);
+      if (this._activeModifierColor && modLabel) {
+        this.roundText.setColor(this._activeModifierColor);
+      } else {
+        this.roundText.setColor('#888');
+      }
       this.roundOverText.setVisible(false);
       this.powerUpContainer.setVisible(false);
       this.gameOverContainer.setVisible(false);
@@ -255,14 +269,31 @@ export class UIScene extends Phaser.Scene {
       }
     });
 
+    // Kill feed
+    gameScene.events.on('player-kill', (data) => {
+      this._addKillFeedEntry(data.killerName, data.victimName);
+    });
+
     gameScene.events.on('spell-switched', (data) => {
       this.currentSlots = data.slots;
       this.activeSpellSlot = data.activeSlot;
       this._drawSpellSlots();
     });
 
-    // Clean up listeners on shutdown to prevent duplicates on reconnect
+    // Round modifier vote (roguelike)
+    gameScene.events.on('show-modifier-vote', (data) => {
+      this._showModifierVote(data);
+    });
+    gameScene.events.on('modifier-result', (data) => {
+      this._showModifierResult(data);
+    });
+
+    // Clean up listeners and timers on shutdown
     this.events.on('shutdown', () => {
+      if (this._shopTimerEvent) { this._shopTimerEvent.remove(); this._shopTimerEvent = null; }
+      this._slotCooldownGraphics = [];
+      this._killFeedTexts.forEach((t) => t.destroy());
+      this._killFeedTexts = [];
       gameScene.events.off('game-started');
       gameScene.events.off('round-start');
       gameScene.events.off('countdown');
@@ -277,6 +308,9 @@ export class UIScene extends Phaser.Scene {
       gameScene.events.off('shop-update');
       gameScene.events.off('shop-ready-update');
       gameScene.events.off('spell-switched');
+      gameScene.events.off('show-modifier-vote');
+      gameScene.events.off('modifier-result');
+      gameScene.events.off('player-kill');
     });
   }
 
@@ -410,6 +444,26 @@ export class UIScene extends Phaser.Scene {
         });
       }
     });
+
+    // KD Scoreboard section at the bottom of upgrade panel
+    const kdEntries = this._buildKDSection();
+    if (kdEntries.length > 0) {
+      const kdTitle = this.add.text(w / 2, h - 30 - kdEntries.length * 20, 'Kills / Deaths', {
+        fontSize: '13px', color: '#e94560', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      this.upgradePanel.add(kdTitle);
+
+      kdEntries.forEach((e, i) => {
+        const y = h - 15 - (kdEntries.length - 1 - i) * 20;
+        const color = WIZARD_COLORS[e.idx % WIZARD_COLORS.length];
+        const colorHex = '#' + color.toString(16).padStart(6, '0');
+        const streakText = e.streak >= 3 ? ` 🔥${e.streak}` : '';
+        const kdText = this.add.text(w / 2, y, `${e.name}  ${e.kills}K / ${e.deaths}D${streakText}`, {
+          fontSize: '11px', color: colorHex,
+        }).setOrigin(0.5);
+        this.upgradePanel.add(kdText);
+      });
+    }
   }
 
   // ---- Escape Menu ----
@@ -796,6 +850,174 @@ export class UIScene extends Phaser.Scene {
     this.goldText.setText(`Gold: ${gold}`);
   }
 
+  // ---- Round Modifier Vote (roguelike) ----
+
+  _showModifierVote(data) {
+    this.powerUpContainer.removeAll(true);
+    this.powerUpContainer.setVisible(true);
+
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+    const gameScene = this.scene.get('GameScene');
+    const options = data.options || [];
+
+    // Dim background
+    const dimBg = this.add.graphics();
+    dimBg.fillStyle(0x000000, 0.65);
+    dimBg.fillRect(-w / 2, -h / 2, w, h);
+    this.powerUpContainer.add(dimBg);
+
+    // Title
+    this.powerUpContainer.add(this.add.text(0, -150, 'VOTE: Round Modifier', {
+      fontSize: '22px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5));
+
+    // Timer
+    const timerText = this.add.text(0, -120, '10s', { fontSize: '14px', color: '#888' }).setOrigin(0.5);
+    this.powerUpContainer.add(timerText);
+    const startTime = Date.now();
+    if (this._modifierTimerEvent) this._modifierTimerEvent.remove();
+    this._modifierTimerEvent = this.time.addEvent({ delay: 500, loop: true, callback: () => {
+      if (!timerText || !timerText.active) { this._modifierTimerEvent.remove(); return; }
+      const rem = Math.max(0, 10 - Math.floor((Date.now() - startTime) / 1000));
+      timerText.setText(`${rem}s`);
+      if (rem <= 0) { this._modifierTimerEvent.remove(); this._modifierTimerEvent = null; }
+    }});
+
+    // Cards
+    const cardW = 170;
+    const cardH = 120;
+    const gap = 16;
+    const totalW = options.length * cardW + (options.length - 1) * gap;
+    const startX = -totalW / 2 + cardW / 2;
+
+    options.forEach((opt, i) => {
+      const cx = startX + i * (cardW + gap);
+      const cy = 0;
+      const color = opt.color || 0x888888;
+
+      const card = this.add.graphics();
+      card.fillStyle(0x16213e, 0.95);
+      card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      card.lineStyle(2, color, 0.7);
+      card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      this.powerUpContainer.add(card);
+
+      // Icon
+      this.powerUpContainer.add(this.add.text(cx, cy - 30, opt.icon || '?', {
+        fontSize: '24px',
+      }).setOrigin(0.5));
+
+      // Name
+      this.powerUpContainer.add(this.add.text(cx, cy + 5, opt.name, {
+        fontSize: '13px', color: '#fff', fontStyle: 'bold',
+      }).setOrigin(0.5));
+
+      // Desc
+      this.powerUpContainer.add(this.add.text(cx, cy + 22, opt.desc, {
+        fontSize: '9px', color: '#aaa', align: 'center', wordWrap: { width: cardW - 16 },
+      }).setOrigin(0.5, 0));
+
+      // Click to vote
+      const zone = this.add.zone(cx, cy, cardW, cardH).setInteractive({ useHandCursor: true });
+      this.powerUpContainer.add(zone);
+      zone.on('pointerover', () => {
+        card.clear();
+        card.fillStyle(0x1e2d52, 0.95); card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+        card.lineStyle(3, color, 1); card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      });
+      zone.on('pointerout', () => {
+        card.clear();
+        card.fillStyle(0x16213e, 0.95); card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+        card.lineStyle(2, color, 0.7); card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      });
+      zone.on('pointerdown', () => {
+        gameScene.submitModifierVote(opt.id);
+        // Flash selection
+        card.clear();
+        card.fillStyle(0x1a3a1a, 0.95); card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+        card.lineStyle(3, 0x44ff44, 1); card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 8);
+      });
+    });
+  }
+
+  _showModifierResult(data) {
+    // Kill the vote timer before destroying its text target
+    if (this._modifierTimerEvent) { this._modifierTimerEvent.remove(); this._modifierTimerEvent = null; }
+    this.powerUpContainer.removeAll(true);
+    this.powerUpContainer.setVisible(true);
+
+    const mod = data.modifier || {};
+
+    // Dim background
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+    const dimBg = this.add.graphics();
+    dimBg.fillStyle(0x000000, 0.6);
+    dimBg.fillRect(-w / 2, -h / 2, w, h);
+    this.powerUpContainer.add(dimBg);
+
+    // Announcement
+    this.powerUpContainer.add(this.add.text(0, -30, mod.icon || '', {
+      fontSize: '48px',
+    }).setOrigin(0.5));
+
+    const colorHex = mod.color ? '#' + mod.color.toString(16).padStart(6, '0') : '#fff';
+    this.powerUpContainer.add(this.add.text(0, 20, mod.name || 'No Modifier', {
+      fontSize: '28px', color: colorHex, fontStyle: 'bold', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5));
+
+    this.powerUpContainer.add(this.add.text(0, 50, mod.desc || '', {
+      fontSize: '14px', color: '#aaa',
+    }).setOrigin(0.5));
+
+    // Also set a banner text that persists during the round
+    this._activeModifierName = mod.name;
+    this._activeModifierColor = colorHex;
+  }
+
+  // ---- Kill Feed ----
+
+  _addKillFeedEntry(killerName, victimName) {
+    const w = this.cameras.main.width;
+    const text = this.add.text(w - 15, 50 + this._killFeedTexts.length * 16, `${killerName} → ${victimName}`, {
+      fontSize: '10px', color: '#e94560', fontStyle: 'bold',
+    }).setOrigin(1, 0).setDepth(30).setAlpha(1);
+    this._killFeedTexts.push(text);
+
+    // Fade out after 3s
+    this.tweens.add({
+      targets: text, alpha: 0, duration: 1000, delay: 3000,
+      onComplete: () => {
+        text.destroy();
+        this._killFeedTexts = this._killFeedTexts.filter((t) => t !== text);
+        // Reposition remaining
+        this._killFeedTexts.forEach((t, i) => t.setY(50 + i * 16));
+      },
+    });
+
+    // Max 5 visible
+    if (this._killFeedTexts.length > 5) {
+      const old = this._killFeedTexts.shift();
+      old.destroy();
+      this._killFeedTexts.forEach((t, i) => t.setY(50 + i * 16));
+    }
+  }
+
+  // ---- KD Scoreboard (in upgrade panel) ----
+
+  _buildKDSection() {
+    const gameScene = this.scene.get('GameScene');
+    if (!gameScene || !gameScene.killStats) return [];
+    const entries = [];
+    this.playerInfo.forEach((player, idx) => {
+      const stats = gameScene.killStats.get(player.peerId);
+      if (!stats) return;
+      entries.push({ name: player.name, kills: stats.kills, deaths: stats.deaths, streak: stats.streak, idx });
+    });
+    return entries.sort((a, b) => b.kills - a.kills);
+  }
+
   // ---- Arena Mode: Shop ----
 
   _makeShopRow(rowX, rowY, rowW, rowH, label, priceStr, canAfford, onClick) {
@@ -1177,6 +1399,8 @@ export class UIScene extends Phaser.Scene {
     if (network.isHost) {
       gameScene.submitLocalUpgrade(upgradeId);
     } else {
+      // Apply locally so client has correct stats
+      gameScene.applyUpgrade(network.localPlayerId, upgradeId);
       gameScene.sendUpgradeChoice(upgradeId);
     }
 

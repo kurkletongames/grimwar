@@ -5,15 +5,28 @@ const SHRINK_RATE = 5.6; // pixels per second (30% slower)
 const LAVA_DAMAGE_PCT = 0.08; // 8% of max health per second
 const SHRINK_DELAY = 5000; // ms before arena starts shrinking
 
+const THEMES = {
+  standard: { lava: 0x8b0000, floor: 0x2a2a4a, border: 0xe94560, wall: 0x555577, ring: 0x3a3a5a },
+  ice:      { lava: 0x1a3a5a, floor: 0x1a2a4a, border: 0x4fc3f7, wall: 0x445577, ring: 0x2a3a5a },
+  volcanic: { lava: 0xaa2200, floor: 0x3a2020, border: 0xff6600, wall: 0x554433, ring: 0x4a2a2a },
+  void:     { lava: 0x220044, floor: 0x1a0a2e, border: 0x9944ff, wall: 0x332255, ring: 0x2a1a3a },
+};
+export const THEME_NAMES = Object.keys(THEMES);
+
 export class Arena {
   constructor(scene, centerX, centerY) {
     this.scene = scene;
     this.centerX = centerX;
     this.centerY = centerY;
+
+    // Theme — set to standard, overridden by GameScene.setTheme()
+    this.themeName = 'standard';
+    this.theme = THEMES.standard;
     this.maxRadius = ARENA_MAX_RADIUS;
     this.currentRadius = ARENA_MAX_RADIUS;
     this.minRadius = ARENA_MIN_RADIUS;
     this.shrinkRate = SHRINK_RATE;
+    this.shrinkDelay = SHRINK_DELAY;
     this.lavaDamagePct = LAVA_DAMAGE_PCT;
     this.wallRadius = WALL_RADIUS;
     this.shrinking = false;
@@ -28,6 +41,13 @@ export class Arena {
     this.draw();
   }
 
+  setTheme(themeName) {
+    if (THEMES[themeName]) {
+      this.themeName = themeName;
+      this.theme = THEMES[themeName];
+    }
+  }
+
   startRound() {
     this.currentRadius = this.maxRadius;
     this.shrinking = false;
@@ -37,7 +57,7 @@ export class Arena {
 
   update(delta) {
     // Start shrinking after delay
-    if (!this.shrinking && Date.now() - this.roundStartTime > SHRINK_DELAY) {
+    if (!this.shrinking && Date.now() - this.roundStartTime > this.shrinkDelay) {
       this.shrinking = true;
     }
 
@@ -50,58 +70,50 @@ export class Arena {
   }
 
   draw() {
-    // Lava floor (full area behind the arena)
-    this.lavaGraphics.clear();
-
-    // Animated lava - create a pulsing effect
+    const t = this.theme;
     const time = Date.now() / 1000;
-    const lavaAlpha = 0.7 + Math.sin(time * 2) * 0.1;
 
-    // Lava base
-    this.lavaGraphics.fillStyle(0x8b0000, lavaAlpha);
+    // Lava/hazard floor
+    this.lavaGraphics.clear();
+    const lavaAlpha = 0.7 + Math.sin(time * 2) * 0.1;
+    this.lavaGraphics.fillStyle(t.lava, lavaAlpha);
     this.lavaGraphics.fillCircle(this.centerX, this.centerY, this.maxRadius + 20);
 
     // Lava highlights
-    this.lavaGraphics.fillStyle(0xff4500, 0.3 + Math.sin(time * 3) * 0.15);
+    this.lavaGraphics.fillStyle(t.border, 0.15 + Math.sin(time * 3) * 0.08);
     this.lavaGraphics.fillCircle(
       this.centerX + Math.sin(time) * 30,
       this.centerY + Math.cos(time * 1.3) * 30,
       this.maxRadius * 0.6
     );
-    this.lavaGraphics.fillStyle(0xff6600, 0.2 + Math.cos(time * 2.5) * 0.1);
-    this.lavaGraphics.fillCircle(
-      this.centerX + Math.cos(time * 0.7) * 50,
-      this.centerY + Math.sin(time * 0.9) * 50,
-      this.maxRadius * 0.4
-    );
 
     // Arena floor (safe zone)
     this.arenaGraphics.clear();
-    this.arenaGraphics.fillStyle(0x2a2a4a, 1);
+    this.arenaGraphics.fillStyle(t.floor, 1);
     this.arenaGraphics.fillCircle(this.centerX, this.centerY, this.currentRadius);
 
-    // Stone texture rings
+    // Texture rings
     for (let r = this.currentRadius; r > 0; r -= 40) {
-      this.arenaGraphics.lineStyle(1, 0x3a3a5a, 0.3);
+      this.arenaGraphics.lineStyle(1, t.ring, 0.3);
       this.arenaGraphics.strokeCircle(this.centerX, this.centerY, r);
     }
 
     // Center mark
-    this.arenaGraphics.fillStyle(0x3a3a6a, 0.5);
+    this.arenaGraphics.fillStyle(t.ring, 0.5);
     this.arenaGraphics.fillCircle(this.centerX, this.centerY, 15);
 
-    // Arena border glow
+    // Border glow
     this.borderGraphics.clear();
-    this.borderGraphics.lineStyle(3, 0xe94560, 0.6 + Math.sin(time * 4) * 0.2);
+    this.borderGraphics.lineStyle(3, t.border, 0.6 + Math.sin(time * 4) * 0.2);
     this.borderGraphics.strokeCircle(this.centerX, this.centerY, this.currentRadius);
-    this.borderGraphics.lineStyle(6, 0xe94560, 0.15);
+    this.borderGraphics.lineStyle(6, t.border, 0.15);
     this.borderGraphics.strokeCircle(this.centerX, this.centerY, this.currentRadius + 3);
 
     // Outer wall
     this.wallGraphics.clear();
-    this.wallGraphics.lineStyle(5, 0x555577, 0.9);
+    this.wallGraphics.lineStyle(5, t.wall, 0.9);
     this.wallGraphics.strokeCircle(this.centerX, this.centerY, this.wallRadius);
-    this.wallGraphics.lineStyle(2, 0x8888aa, 0.4);
+    this.wallGraphics.lineStyle(2, t.wall, 0.4);
     this.wallGraphics.strokeCircle(this.centerX, this.centerY, this.wallRadius + 3);
   }
 

@@ -20,7 +20,7 @@ export const WIZARD_COLORS = [
 ];
 
 export class Wizard {
-  constructor(scene, x, y, playerId, playerName, colorIndex) {
+  constructor(scene, x, y, playerId, playerName, colorIndex, cosmetics) {
     this.scene = scene;
     this.playerId = playerId;
     this.playerName = playerName;
@@ -28,6 +28,8 @@ export class Wizard {
     this.maxHealth = MAX_HEALTH;
     this.alive = true;
     this.color = WIZARD_COLORS[colorIndex % WIZARD_COLORS.length];
+    this.cosmetics = cosmetics || { hat: 'classic', trail: 'none', eyes: 'normal' };
+    this._trailPositions = [];
 
     // Movement
     this.inputDir = { x: 0, y: 0 }; // For WASD
@@ -48,6 +50,9 @@ export class Wizard {
     this.knockbackResist = 0; // 0-1, reduces incoming knockback
     this.tethered = false; // true when being pulled by tether (disables friction)
     this.inGravity = false; // true when in gravity sphere pull (reduces friction)
+    this.bonusSpeed = 0; // additional movement speed from arena upgrades
+    this.sparkle = false; // secret sparkle effect
+    this._sparkleTimer = 0;
 
     // Rush dash state
     this.dashing = false;
@@ -107,21 +112,187 @@ export class Wizard {
     this.graphics.fillStyle(this.color, 1);
     this.graphics.fillCircle(this.x, this.y, this.radius);
 
-    // Hat (triangle on top)
-    this.graphics.fillStyle(this.color, 0.8);
-    this.graphics.fillTriangle(
-      this.x - 12, this.y - 12,
-      this.x + 12, this.y - 12,
-      this.x, this.y - 32
-    );
+    // Aura (drawn behind body)
+    const aura = this.cosmetics.aura;
+    if (aura !== 'none' && this.alive) {
+      const auraColors = { flame: 0xff4400, frost: 0x88ddff, dark: 0x442266, holy: 0xffdd44, electric: 0xffff44, nature: 0x44aa22 };
+      const ac = auraColors[aura] || 0xffffff;
+      const pulse = 0.7 + Math.sin((this._sparkleTimer || 0) * 2) * 0.3;
+      this.graphics.fillStyle(ac, 0.1 * pulse);
+      this.graphics.fillCircle(this.x, this.y, this.radius + 12);
+      this.graphics.fillStyle(ac, 0.06 * pulse);
+      this.graphics.fillCircle(this.x, this.y, this.radius + 20);
+    }
+
+    // Hat
+    const hat = this.cosmetics.hat;
+    if (hat === 'classic') {
+      this.graphics.fillStyle(this.color, 0.8);
+      this.graphics.fillTriangle(this.x - 12, this.y - 12, this.x + 12, this.y - 12, this.x, this.y - 32);
+    } else if (hat === 'crown') {
+      this.graphics.fillStyle(0xffd700, 0.9);
+      this.graphics.fillRect(this.x - 10, this.y - 22, 20, 8);
+      this.graphics.fillTriangle(this.x - 10, this.y - 22, this.x - 6, this.y - 22, this.x - 8, this.y - 30);
+      this.graphics.fillTriangle(this.x - 2, this.y - 22, this.x + 2, this.y - 22, this.x, this.y - 32);
+      this.graphics.fillTriangle(this.x + 6, this.y - 22, this.x + 10, this.y - 22, this.x + 8, this.y - 30);
+    } else if (hat === 'horns') {
+      this.graphics.fillStyle(0xcc2222, 0.9);
+      this.graphics.fillTriangle(this.x - 14, this.y - 8, this.x - 8, this.y - 10, this.x - 16, this.y - 28);
+      this.graphics.fillTriangle(this.x + 14, this.y - 8, this.x + 8, this.y - 10, this.x + 16, this.y - 28);
+    } else if (hat === 'halo') {
+      this.graphics.lineStyle(2, 0xffdd44, 0.8);
+      this.graphics.strokeEllipse(this.x, this.y - 24, 22, 8);
+    } else if (hat === 'tophat') {
+      this.graphics.fillStyle(0x222222, 0.9);
+      this.graphics.fillRect(this.x - 10, this.y - 20, 20, 6);
+      this.graphics.fillRect(this.x - 7, this.y - 34, 14, 14);
+    } else if (hat === 'beanie') {
+      this.graphics.fillStyle(0x4488cc, 0.9);
+      this.graphics.fillCircle(this.x, this.y - 16, 12);
+      this.graphics.fillStyle(0xffffff, 0.8);
+      this.graphics.fillCircle(this.x, this.y - 28, 4);
+    } else if (hat === 'antenna') {
+      this.graphics.lineStyle(2, 0x888888, 0.9);
+      this.graphics.lineBetween(this.x, this.y - 16, this.x, this.y - 34);
+      this.graphics.fillStyle(0x44ff44, 0.9);
+      this.graphics.fillCircle(this.x, this.y - 36, 4);
+    } else if (hat === 'mohawk') {
+      this.graphics.fillStyle(0xff2288, 0.9);
+      for (let i = 0; i < 5; i++) {
+        const mx = this.x - 6 + i * 3;
+        this.graphics.fillTriangle(mx - 2, this.y - 14, mx + 2, this.y - 14, mx, this.y - 28 - i);
+      }
+    } else if (hat === 'cat_ears') {
+      this.graphics.fillStyle(this.color, 0.9);
+      this.graphics.fillTriangle(this.x - 14, this.y - 10, this.x - 6, this.y - 10, this.x - 10, this.y - 26);
+      this.graphics.fillTriangle(this.x + 14, this.y - 10, this.x + 6, this.y - 10, this.x + 10, this.y - 26);
+      this.graphics.fillStyle(0xffaaaa, 0.7);
+      this.graphics.fillTriangle(this.x - 12, this.y - 12, this.x - 8, this.y - 12, this.x - 10, this.y - 22);
+      this.graphics.fillTriangle(this.x + 12, this.y - 12, this.x + 8, this.y - 12, this.x + 10, this.y - 22);
+    } else if (hat === 'pirate') {
+      this.graphics.fillStyle(0x222222, 0.9);
+      this.graphics.fillTriangle(this.x - 14, this.y - 14, this.x + 14, this.y - 14, this.x, this.y - 30);
+      this.graphics.fillRect(this.x - 14, this.y - 16, 28, 4);
+      this.graphics.fillStyle(0xffffff, 0.8);
+      this.graphics.fillCircle(this.x, this.y - 20, 3);
+    } else if (hat === 'chef') {
+      this.graphics.fillStyle(0xeeeeee, 0.9);
+      this.graphics.fillCircle(this.x, this.y - 24, 12);
+      this.graphics.fillRect(this.x - 8, this.y - 18, 16, 6);
+    }
 
     // Eyes
-    this.graphics.fillStyle(0xffffff, 1);
-    this.graphics.fillCircle(this.x - 6, this.y - 3, 4);
-    this.graphics.fillCircle(this.x + 6, this.y - 3, 4);
-    this.graphics.fillStyle(0x000000, 1);
-    this.graphics.fillCircle(this.x - 5, this.y - 3, 2);
-    this.graphics.fillCircle(this.x + 7, this.y - 3, 2);
+    const eyes = this.cosmetics.eyes;
+    if (eyes === 'normal' || eyes === 'angry') {
+      this.graphics.fillStyle(0xffffff, 1);
+      this.graphics.fillCircle(this.x - 6, this.y - 3, 4);
+      this.graphics.fillCircle(this.x + 6, this.y - 3, 4);
+      this.graphics.fillStyle(0x000000, 1);
+      this.graphics.fillCircle(this.x - 5, this.y - 3, 2);
+      this.graphics.fillCircle(this.x + 7, this.y - 3, 2);
+      if (eyes === 'angry') {
+        this.graphics.lineStyle(2, this.color, 0.9);
+        this.graphics.lineBetween(this.x - 10, this.y - 8, this.x - 2, this.y - 6);
+        this.graphics.lineBetween(this.x + 10, this.y - 8, this.x + 2, this.y - 6);
+      }
+    } else if (eyes === 'cyclops') {
+      this.graphics.fillStyle(0xffffff, 1);
+      this.graphics.fillCircle(this.x, this.y - 3, 6);
+      this.graphics.fillStyle(0x000000, 1);
+      this.graphics.fillCircle(this.x + 1, this.y - 3, 3);
+    } else if (eyes === 'closed') {
+      this.graphics.lineStyle(2, 0x000000, 0.8);
+      this.graphics.lineBetween(this.x - 9, this.y - 3, this.x - 3, this.y - 3);
+      this.graphics.lineBetween(this.x + 3, this.y - 3, this.x + 9, this.y - 3);
+    } else if (eyes === 'glowing') {
+      this.graphics.fillStyle(this.color, 0.4);
+      this.graphics.fillCircle(this.x - 6, this.y - 3, 6);
+      this.graphics.fillCircle(this.x + 6, this.y - 3, 6);
+      this.graphics.fillStyle(0xffffff, 1);
+      this.graphics.fillCircle(this.x - 6, this.y - 3, 3);
+      this.graphics.fillCircle(this.x + 6, this.y - 3, 3);
+    } else if (eyes === 'x_eyes') {
+      this.graphics.lineStyle(2, 0x000000, 0.9);
+      this.graphics.lineBetween(this.x - 8, this.y - 5, this.x - 4, this.y - 1);
+      this.graphics.lineBetween(this.x - 4, this.y - 5, this.x - 8, this.y - 1);
+      this.graphics.lineBetween(this.x + 4, this.y - 5, this.x + 8, this.y - 1);
+      this.graphics.lineBetween(this.x + 8, this.y - 5, this.x + 4, this.y - 1);
+    } else if (eyes === 'hearts') {
+      this.graphics.fillStyle(0xff4488, 1);
+      this.graphics.fillCircle(this.x - 7, this.y - 4, 3);
+      this.graphics.fillCircle(this.x - 5, this.y - 4, 3);
+      this.graphics.fillTriangle(this.x - 9, this.y - 3, this.x - 3, this.y - 3, this.x - 6, this.y + 1);
+      this.graphics.fillCircle(this.x + 5, this.y - 4, 3);
+      this.graphics.fillCircle(this.x + 7, this.y - 4, 3);
+      this.graphics.fillTriangle(this.x + 3, this.y - 3, this.x + 9, this.y - 3, this.x + 6, this.y + 1);
+    } else if (eyes === 'tiny') {
+      this.graphics.fillStyle(0x000000, 1);
+      this.graphics.fillCircle(this.x - 5, this.y - 3, 1.5);
+      this.graphics.fillCircle(this.x + 5, this.y - 3, 1.5);
+    } else if (eyes === 'wide') {
+      this.graphics.fillStyle(0xffffff, 1);
+      this.graphics.fillCircle(this.x - 6, this.y - 3, 6);
+      this.graphics.fillCircle(this.x + 6, this.y - 3, 6);
+      this.graphics.fillStyle(0x000000, 1);
+      this.graphics.fillCircle(this.x - 5, this.y - 3, 2.5);
+      this.graphics.fillCircle(this.x + 7, this.y - 3, 2.5);
+    }
+
+    // Mouth
+    const mouth = this.cosmetics.mouth;
+    if (mouth === 'smile') {
+      this.graphics.lineStyle(1.5, 0x000000, 0.7);
+      this.graphics.beginPath();
+      this.graphics.arc(this.x, this.y + 4, 5, 0.2, Math.PI - 0.2, false);
+      this.graphics.strokePath();
+    } else if (mouth === 'grin') {
+      this.graphics.lineStyle(1.5, 0x000000, 0.7);
+      this.graphics.beginPath();
+      this.graphics.arc(this.x, this.y + 3, 6, 0.1, Math.PI - 0.1, false);
+      this.graphics.strokePath();
+      this.graphics.fillStyle(0xffffff, 0.6);
+      this.graphics.fillRect(this.x - 4, this.y + 5, 8, 2);
+    } else if (mouth === 'frown') {
+      this.graphics.lineStyle(1.5, 0x000000, 0.7);
+      this.graphics.beginPath();
+      this.graphics.arc(this.x, this.y + 10, 5, Math.PI + 0.2, -0.2, false);
+      this.graphics.strokePath();
+    } else if (mouth === 'fangs') {
+      this.graphics.fillStyle(0xffffff, 0.9);
+      this.graphics.fillTriangle(this.x - 4, this.y + 4, this.x - 2, this.y + 4, this.x - 3, this.y + 9);
+      this.graphics.fillTriangle(this.x + 2, this.y + 4, this.x + 4, this.y + 4, this.x + 3, this.y + 9);
+    } else if (mouth === 'tongue') {
+      this.graphics.lineStyle(1.5, 0x000000, 0.6);
+      this.graphics.lineBetween(this.x - 4, this.y + 5, this.x + 4, this.y + 5);
+      this.graphics.fillStyle(0xff6688, 0.8);
+      this.graphics.fillCircle(this.x, this.y + 9, 3);
+    } else if (mouth === 'mustache') {
+      this.graphics.fillStyle(0x443322, 0.8);
+      this.graphics.beginPath();
+      this.graphics.arc(this.x - 4, this.y + 4, 5, Math.PI + 0.3, -0.3, false);
+      this.graphics.strokePath();
+      this.graphics.beginPath();
+      this.graphics.arc(this.x + 4, this.y + 4, 5, Math.PI + 0.3, -0.3, false);
+      this.graphics.strokePath();
+    }
+
+    // Cosmetic trail
+    if (this.cosmetics.trail !== 'none' && this.alive) {
+      this._trailPositions.push({ x: this.x, y: this.y });
+      if (this._trailPositions.length > 5) this._trailPositions.shift();
+      const trailColors = { fire: 0xff4400, ice: 0x88ddff, shadow: 0x333355, poison: 0x44ff22, electric: 0xffff44, blood: 0xcc0000, gold: 0xffd700, void: 0x6622cc };
+      this._trailPositions.forEach((p, i) => {
+        const a = (i / this._trailPositions.length) * 0.3;
+        const s = (i / this._trailPositions.length) * this.radius * 0.6;
+        if (this.cosmetics.trail === 'rainbow') {
+          const hue = [0xff0000, 0xff8800, 0xffff00, 0x00ff00, 0x0088ff][i % 5];
+          this.graphics.fillStyle(hue, a);
+        } else {
+          this.graphics.fillStyle(trailColors[this.cosmetics.trail] || 0xffffff, a);
+        }
+        this.graphics.fillCircle(p.x, p.y, s);
+      });
+    }
 
     // Name
     this.nameText.setPosition(this.x, this.y - this.radius - 24);
@@ -140,6 +311,21 @@ export class Wizard {
     const healthColor = healthPct > 0.5 ? 0x66bb6a : healthPct > 0.25 ? 0xffa726 : 0xe94560;
     this.healthBar.fillStyle(healthColor, 1);
     this.healthBar.fillRect(this.x - barWidth / 2, barY, barWidth * healthPct, barHeight);
+
+    // Secret sparkle effect
+    if (this.sparkle && this.alive) {
+      this._sparkleTimer += 0.15;
+      const sparkleColors = [0xffff44, 0xff88ff, 0x44ffff, 0xffffff, 0x88ff44];
+      for (let i = 0; i < 4; i++) {
+        const angle = this._sparkleTimer * 2 + i * Math.PI / 2;
+        const dist = this.radius + 6 + Math.sin(this._sparkleTimer * 3 + i) * 4;
+        const sx = this.x + Math.cos(angle) * dist;
+        const sy = this.y + Math.sin(angle) * dist;
+        const col = sparkleColors[Math.floor((this._sparkleTimer + i) % sparkleColors.length)];
+        this.graphics.fillStyle(col, 0.7 + Math.sin(this._sparkleTimer * 5 + i * 2) * 0.3);
+        this.graphics.fillCircle(sx, sy, 2);
+      }
+    }
 
     // Fireball cooldown ring
     this.cooldownGraphics.clear();
@@ -205,12 +391,13 @@ export class Wizard {
   }
 
   applyKnockback(velX, velY) {
-    // Smash Bros-style: knockback scales with damage taken (lower health = more knockback)
-    const damagePct = 1 - (this.health / this.maxHealth); // 0 at full HP, 1 at 0 HP
-    const scale = 1 + damagePct * 2; // 1x at full HP, up to 3x at low HP
-    const resist = 1 - Math.min(0.8, this.knockbackResist); // max 80% reduction
-    this.knockbackVel.x += velX * scale * resist;
-    this.knockbackVel.y += velY * scale * resist;
+    const damagePct = 1 - (this.health / this.maxHealth);
+    const scale = 1 + damagePct * 2;
+    const resist = 1 - Math.min(0.8, this.knockbackResist);
+    const modMult = this._modKnockbackMult || 1;
+    const dir = this._modReverseKB ? -1 : 1;
+    this.knockbackVel.x += velX * scale * resist * modMult * dir;
+    this.knockbackVel.y += velY * scale * resist * modMult * dir;
   }
 
   takeDamage(amount) {
@@ -218,6 +405,8 @@ export class Wizard {
     this.health = Math.max(0, this.health - amount);
     if (this.health <= 0) {
       this.alive = false;
+      this.tethered = false; // release tether on death
+      this.inGravity = false;
     }
   }
 
@@ -272,8 +461,9 @@ export class Wizard {
       const speedMult = this.slowEffect ? this.slowEffect.factor : 1;
       if (this.inputDir.x !== 0 || this.inputDir.y !== 0) {
         const len = Math.sqrt(this.inputDir.x ** 2 + this.inputDir.y ** 2) || 1;
-        moveX = (this.inputDir.x / len) * WIZARD_SPEED * speedMult * dt;
-        moveY = (this.inputDir.y / len) * WIZARD_SPEED * speedMult * dt;
+        const totalSpeed = (WIZARD_SPEED + this.bonusSpeed) * speedMult;
+        moveX = (this.inputDir.x / len) * totalSpeed * dt;
+        moveY = (this.inputDir.y / len) * totalSpeed * dt;
       }
     }
 
@@ -289,8 +479,9 @@ export class Wizard {
       this.knockbackVel.x *= 0.995;
       this.knockbackVel.y *= 0.995;
     } else {
-      this.knockbackVel.x *= FRICTION;
-      this.knockbackVel.y *= FRICTION;
+      const fric = this._modFrictionOverride || FRICTION;
+      this.knockbackVel.x *= fric;
+      this.knockbackVel.y *= fric;
       if (Math.abs(this.knockbackVel.x) < FRICTION_THRESHOLD) this.knockbackVel.x = 0;
       if (Math.abs(this.knockbackVel.y) < FRICTION_THRESHOLD) this.knockbackVel.y = 0;
     }

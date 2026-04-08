@@ -151,6 +151,87 @@
 
       <div class="lobby-section">
         <input type="text" id="name-input" placeholder="Enter your wizard name" maxlength="16" />
+        <button id="btn-customize" style="background:#0f3460; border:1px solid #4fc3f7; color:#4fc3f7; padding:6px 16px; border-radius:4px; font-size:0.8em; cursor:pointer; margin-top:6px;">Customize Wizard</button>
+      </div>
+
+      <!-- Character editor (hidden initially) -->
+      <div id="customize-section" style="display:none; margin:12px 0; text-align:left; max-width:400px; margin-left:auto; margin-right:auto;">
+        <!-- Preview canvas -->
+        <div style="text-align:center; margin-bottom:10px;">
+          <canvas id="wizard-preview" width="120" height="120" style="background:#1a1a2e; border:1px solid #333; border-radius:8px;"></canvas>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <div>
+            <label style="color:#888; font-size:0.75em;">Hat</label>
+            <select id="cosmetic-hat" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+              <option value="classic">Classic Wizard</option>
+              <option value="crown">Crown</option>
+              <option value="horns">Horns</option>
+              <option value="halo">Halo</option>
+              <option value="tophat">Top Hat</option>
+              <option value="beanie">Beanie</option>
+              <option value="antenna">Antenna</option>
+              <option value="mohawk">Mohawk</option>
+              <option value="cat_ears">Cat Ears</option>
+              <option value="pirate">Pirate Hat</option>
+              <option value="chef">Chef Hat</option>
+              <option value="none">No Hat</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:#888; font-size:0.75em;">Eyes</label>
+            <select id="cosmetic-eyes" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+              <option value="normal">Normal</option>
+              <option value="angry">Angry</option>
+              <option value="cyclops">Cyclops</option>
+              <option value="closed">Zen</option>
+              <option value="glowing">Glowing</option>
+              <option value="x_eyes">X Eyes</option>
+              <option value="hearts">Heart Eyes</option>
+              <option value="tiny">Tiny</option>
+              <option value="wide">Wide</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:#888; font-size:0.75em;">Mouth</label>
+            <select id="cosmetic-mouth" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+              <option value="none">None</option>
+              <option value="smile">Smile</option>
+              <option value="grin">Grin</option>
+              <option value="frown">Frown</option>
+              <option value="fangs">Fangs</option>
+              <option value="tongue">Tongue</option>
+              <option value="mustache">Mustache</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:#888; font-size:0.75em;">Trail</label>
+            <select id="cosmetic-trail" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+              <option value="none">None</option>
+              <option value="fire">Fire</option>
+              <option value="ice">Ice</option>
+              <option value="shadow">Shadow</option>
+              <option value="rainbow">Rainbow</option>
+              <option value="poison">Poison</option>
+              <option value="electric">Electric</option>
+              <option value="blood">Blood</option>
+              <option value="gold">Gold</option>
+              <option value="void">Void</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:#888; font-size:0.75em;">Aura</label>
+            <select id="cosmetic-aura" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+              <option value="none">None</option>
+              <option value="flame">Flame</option>
+              <option value="frost">Frost</option>
+              <option value="dark">Dark</option>
+              <option value="holy">Holy</option>
+              <option value="electric">Electric</option>
+              <option value="nature">Nature</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <!-- Mode selection -->

@@ -1517,7 +1517,7 @@ export class GameScene extends Phaser.Scene {
     const rateKey = `${peerId}-${data.action}`;
     const now = Date.now();
     const lastTime = this._rateLimits.get(rateKey) || 0;
-    const limits = { 'move-dir': 33, 'fireball': 200, 'cast': 200, 'blink': 500 };
+    const limits = { 'move-dir': 16, 'fireball': 200, 'cast': 200, 'blink': 500 };
     const minInterval = limits[data.action] || 100;
     if (now - lastTime < minInterval) return;
     this._rateLimits.set(rateKey, now);
@@ -1591,9 +1591,9 @@ export class GameScene extends Phaser.Scene {
           if (now - lastCast < castCd) return;
           this._spawnProjectile(peerId, spellId, wizard.x, wizard.y, data.dirX, data.dirY);
         } else {
-          const fbCd2 = this._getFireballCooldown(peerId);
-          const lastFb2 = this.playerFireballTimes.get(peerId) || 0;
-          if (now - lastFb2 < fbCd2) return;
+          const cd = this._getFireballCooldown(peerId);
+          const last = this.playerFireballTimes.get(peerId) || 0;
+          if (now - last < cd) return;
           this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
         }
         break;

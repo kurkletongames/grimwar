@@ -44,7 +44,11 @@ export class NetworkManager {
   _generateCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     const arr = new Uint8Array(8);
-    crypto.getRandomValues(arr);
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      crypto.getRandomValues(arr);
+    } else {
+      for (let i = 0; i < 8; i++) arr[i] = Math.floor(Math.random() * 256);
+    }
     return Array.from(arr, (x) => chars[x % chars.length]).join('');
   }
 

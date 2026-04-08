@@ -43,11 +43,9 @@ export class NetworkManager {
 
   _generateCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 8; i++) {
-      code += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return code;
+    const arr = new Uint8Array(8);
+    crypto.getRandomValues(arr);
+    return Array.from(arr, (x) => chars[x % chars.length]).join('');
   }
 
   /**
@@ -147,9 +145,16 @@ export class NetworkManager {
     });
   }
 
+  _sanitizeName(name) {
+    if (typeof name !== 'string') return 'Unknown';
+    return name.substring(0, 24).replace(/[<>"'&]/g, '');
+  }
+
   _handleHostMessage(conn, data) {
+    if (!data || typeof data.type !== 'string') return;
     switch (data.type) {
       case 'join': {
+        data.name = this._sanitizeName(data.name);
         // Check if this is a reconnection attempt during an active game
         if (this.gameStarted && this.disconnectedPlayers.has(data.name)) {
           const originalPeerId = this.disconnectedPlayers.get(data.name);

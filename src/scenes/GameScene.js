@@ -1510,6 +1510,17 @@ export class GameScene extends Phaser.Scene {
 
   _handleRemoteInput(peerId, data) {
     if (!network.isHost) return;
+    if (!data || typeof data.action !== 'string') return;
+
+    // Rate limiting
+    if (!this._rateLimits) this._rateLimits = new Map();
+    const rateKey = `${peerId}-${data.action}`;
+    const now = Date.now();
+    const lastTime = this._rateLimits.get(rateKey) || 0;
+    const limits = { 'move-dir': 33, 'fireball': 200, 'cast': 200, 'blink': 500 };
+    const minInterval = limits[data.action] || 100;
+    if (now - lastTime < minInterval) return;
+    this._rateLimits.set(rateKey, now);
 
     // Upgrade selection — handle before wizard alive check
     if (data.action === 'upgrade') {
@@ -1521,19 +1532,19 @@ export class GameScene extends Phaser.Scene {
 
     // Shop purchases (arena mode) — also before wizard check
     if (data.action === 'shop-buy-spell') {
-      this._handleShopBuySpell(peerId, data.spellId);
+      if (typeof data.spellId === 'string') this._handleShopBuySpell(peerId, data.spellId);
       return;
     }
     if (data.action === 'shop-buy-tier') {
-      this._handleShopBuyTier(peerId, data.spellId);
+      if (typeof data.spellId === 'string') this._handleShopBuyTier(peerId, data.spellId);
       return;
     }
     if (data.action === 'shop-buy-blink') {
-      this._handleShopBuyBlink(peerId, data.blinkId);
+      if (typeof data.blinkId === 'string') this._handleShopBuyBlink(peerId, data.blinkId);
       return;
     }
     if (data.action === 'shop-buy-global') {
-      this._handleShopBuyGlobal(peerId, data.upgradeId);
+      if (typeof data.upgradeId === 'string') this._handleShopBuyGlobal(peerId, data.upgradeId);
       return;
     }
     if (data.action === 'shop-ready') {
@@ -1541,7 +1552,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (data.action === 'modifier-vote') {
-      this._handleModifierVote(peerId, data.modifierId);
+      if (typeof data.modifierId === 'string') this._handleModifierVote(peerId, data.modifierId);
       return;
     }
 
@@ -1551,25 +1562,48 @@ export class GameScene extends Phaser.Scene {
     switch (data.action) {
       case 'move-dir':
         if (!this._isFiniteNum(data.x) || !this._isFiniteNum(data.y)) return;
-        wizard.setInput(data.x, data.y);
+        // Clamp to [-1, 1]
+        wizard.setInput(Math.max(-1, Math.min(1, data.x)), Math.max(-1, Math.min(1, data.y)));
         break;
-      case 'fireball':
+      case 'fireball': {
         if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
+        // Enforce cooldown on host
+        const fbCd = this._getFireballCooldown(peerId);
+        const lastFb = this.playerFireballTimes.get(peerId) || 0;
+        if (now - lastFb < fbCd) return;
         this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
         break;
+      }
       case 'cast': {
-        // Arena mode spell cast
         if (!this._isFiniteNum(data.dirX) || !this._isFiniteNum(data.dirY)) return;
         const spellId = data.spellId || 'fireball';
+        // Validate spell ownership in arena mode
         if (this.gameMode === 'arena') {
+          const sd = this.playerSpellData.get(peerId);
+          if (sd) {
+            const owned = Object.values(sd.slots).filter(Boolean);
+            if (spellId !== 'fireball' && !owned.includes(spellId)) return;
+          }
+          // Enforce cooldown on host
+          const castCd = this._getSpellCooldown(peerId, spellId);
+          const castKey = this._getSpellCastTimeKey(peerId, spellId);
+          const lastCast = this.spellCastTimes.get(castKey) || 0;
+          if (now - lastCast < castCd) return;
           this._spawnProjectile(peerId, spellId, wizard.x, wizard.y, data.dirX, data.dirY);
         } else {
+          const fbCd2 = this._getFireballCooldown(peerId);
+          const lastFb2 = this.playerFireballTimes.get(peerId) || 0;
+          if (now - lastFb2 < fbCd2) return;
           this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
         }
         break;
       }
       case 'blink': {
         if (!this._isFiniteNum(data.targetX) || !this._isFiniteNum(data.targetY)) return;
+        // Enforce blink cooldown on host
+        const blinkCd = this._getBlinkCooldown(peerId);
+        const lastBlink = this.playerBlinkTimes.get(peerId) || 0;
+        if (now - lastBlink < blinkCd) return;
         const blinkDirX = data.targetX - wizard.x;
         const blinkDirY = data.targetY - wizard.y;
         this._executeBlink(peerId, blinkDirX, blinkDirY);

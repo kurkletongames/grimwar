@@ -1,4 +1,4 @@
-const LAND_DELAY = 600;   // ms before meteor lands after indicator appears
+const LAND_DELAY = 780;   // ms before meteor lands after indicator appears
 const ROLL_SPEED = 130;   // pixels/sec rolling speed after landing
 const ROLL_LIFETIME = 3500; // ms the meteor rolls after landing
 

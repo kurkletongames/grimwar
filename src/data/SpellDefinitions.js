@@ -159,7 +159,7 @@ export const SPELL_DEFS = {
     category: 'tricky',
     color: 0x44ffcc,
     shopPrice: 200,
-    baseCooldown: 8000,
+    baseCooldown: 10800,
     baseStats: {
       wallDuration: 4000, wallLength: 90, wallThickness: 14, cooldownReduction: 0,
     },
@@ -183,7 +183,7 @@ export const SPELL_DEFS = {
     shopPrice: 250,
     baseCooldown: 6000,
     baseStats: {
-      speed: 150, damage: 35, knockback: 2000, radius: 28,
+      speed: 150, damage: 25, knockback: 2000, radius: 28,
       explosionRadius: 110, cooldownReduction: 0,
     },
     tiers: {
@@ -227,7 +227,7 @@ export const SPELL_DEFS = {
     shopPrice: 250,
     baseCooldown: 5000,
     baseStats: {
-      damage: 15, knockback: 3600, strikeRadius: 70, strikeDelay: 650, cooldownReduction: 0,
+      damage: 15, knockback: 3600, strikeRadius: 70, strikeDelay: 845, cooldownReduction: 0,
     },
     tiers: {
       1: { title: 'Overload', desc: 'Damage +5, KB +200, Radius +10', price: 75,
@@ -325,7 +325,7 @@ export const BLINK_IDS = ['rush', 'extended_blink', 'swap'];
 /** Global (non-spell) upgrades available in arena shop */
 export const GLOBAL_UPGRADES = [
   { id: 'shop_hp', title: 'Fortify', desc: 'Max HP +15', price: 75, apply: (g) => { g.bonusHp += 15; } },
-  { id: 'shop_speed', title: 'Swift Feet', desc: 'Movement speed +12', price: 75, apply: (g) => { g.bonusSpeed = (g.bonusSpeed || 0) + 12; } },
+  { id: 'shop_speed', title: 'Swift Feet', desc: 'Movement speed +12 (cost +25 each buy)', price: 75, priceIncrease: 25, apply: (g) => { g.bonusSpeed = (g.bonusSpeed || 0) + 12; } },
 ];
 
 /** Create a fresh spell stats object (copy of base stats) */

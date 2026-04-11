@@ -97,6 +97,7 @@ export class LobbyManager {
 
   async _onHost() {
     const name = this._getName();
+    network._cosmetics = this._getCosmetics();
     this.lobbyStatus.textContent = 'Creating game...';
 
     try {
@@ -130,6 +131,7 @@ export class LobbyManager {
       return;
     }
     const name = this._getName();
+    network._cosmetics = this._getCosmetics();
     this.lobbyStatus.textContent = 'Connecting...';
 
     try {
@@ -152,9 +154,9 @@ export class LobbyManager {
     const cosmetics = this._getCosmetics();
     const players = [
       { peerId: 'local-player', name, isHost: true, cosmetics },
-      { peerId: 'bot-1', name: 'Bot Ignis', isHost: false, cosmetics: { hat: 'horns', trail: 'fire', eyes: 'angry' } },
-      { peerId: 'bot-2', name: 'Bot Frost', isHost: false, cosmetics: { hat: 'halo', trail: 'ice', eyes: 'normal' } },
-      { peerId: 'bot-3', name: 'Bot Storm', isHost: false, cosmetics: { hat: 'crown', trail: 'shadow', eyes: 'cyclops' } },
+      { peerId: 'bot-1', name: 'Bot Ignis', isHost: false, cosmetics: { hat: 'horns', trail: 'fire', eyes: 'angry', aura: 'flame', mouth: 'fangs' } },
+      { peerId: 'bot-2', name: 'Bot Frost', isHost: false, cosmetics: { hat: 'halo', trail: 'ice', eyes: 'normal', aura: 'frost', mouth: 'smile' } },
+      { peerId: 'bot-3', name: 'Bot Storm', isHost: false, cosmetics: { hat: 'crown', trail: 'shadow', eyes: 'cyclops', aura: 'dark', mouth: 'grin' } },
     ];
 
     this.lobby.classList.add('hidden');

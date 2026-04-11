@@ -28,7 +28,8 @@ export class Wizard {
     this.maxHealth = MAX_HEALTH;
     this.alive = true;
     this.color = WIZARD_COLORS[colorIndex % WIZARD_COLORS.length];
-    this.cosmetics = cosmetics || { hat: 'classic', trail: 'none', eyes: 'normal' };
+    const defaults = { hat: 'classic', trail: 'none', eyes: 'normal', aura: 'none', mouth: 'none' };
+    this.cosmetics = cosmetics ? { ...defaults, ...cosmetics } : defaults;
     this._trailPositions = [];
 
     // Movement

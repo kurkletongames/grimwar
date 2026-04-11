@@ -45,8 +45,8 @@ export class UIScene extends Phaser.Scene {
     this.gameMode = 'roguelike';
 
     // ---- Round text ----
-    this.roundText = this.add.text(w / 2, 20, '', {
-      fontSize: '18px', color: '#888', fontStyle: 'bold',
+    this.roundText = this.add.text(w / 2, 22, '', {
+      fontSize: '26px', color: '#888', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(20);
 
     // ---- Countdown text ----
@@ -1287,8 +1287,11 @@ export class UIScene extends Phaser.Scene {
     }
 
     // Global upgrades
+    const purchased = sd ? sd.purchasedUpgrades || [] : [];
     GLOBAL_UPGRADES.forEach((upg) => {
-      this._makeShopRow(rowX, rowY, rowW, rowH, `${upg.title} — ${upg.desc}`, `${upg.price}g`, gold >= upg.price, () => {
+      const timesBought = purchased.filter((id) => id === upg.id).length;
+      const actualPrice = upg.price + (upg.priceIncrease || 0) * timesBought;
+      this._makeShopRow(rowX, rowY, rowW, rowH, `${upg.title} — ${upg.desc}`, `${actualPrice}g`, gold >= actualPrice, () => {
         if (network.isHost) gameScene.submitShopBuyGlobal(upg.id);
         else gameScene.sendShopBuyGlobal(upg.id);
       });

@@ -66,7 +66,7 @@ export class NetworkManager {
 
       this.peer.on('open', (id) => {
         this.localPlayerId = id;
-        this.players.set(id, { name: playerName, peerId: id, isHost: true });
+        this.players.set(id, { name: playerName, peerId: id, isHost: true, cosmetics: this._cosmetics || null });
         this._setupHostListeners();
         resolve(this.gameCode);
       });
@@ -108,6 +108,7 @@ export class NetworkManager {
             type: 'join',
             name: playerName,
             peerId: id,
+            cosmetics: this._cosmetics || null,
           });
 
           this._setupClientListeners(conn);
@@ -213,6 +214,7 @@ export class NetworkManager {
           name: data.name,
           peerId: data.peerId,
           isHost: false,
+          cosmetics: data.cosmetics || null,
         });
 
         // Send current player list to new player
@@ -311,6 +313,9 @@ export class NetworkManager {
           break;
         case 'upgrade-applied':
           if (this.onUpgradeApplied) this.onUpgradeApplied(data);
+          break;
+        case 'laser':
+          if (this.onLaser) this.onLaser(data);
           break;
         case 'show-shop':
           if (this.onShowShop) this.onShowShop(data);

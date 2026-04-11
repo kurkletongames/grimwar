@@ -246,11 +246,18 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-THREE', () => this._switchSpell(2));
     this.input.keyboard.on('keydown-FOUR', () => this._switchSpell(3));
 
-    // Secret sparkle (Shift+Q)
+    // Secret sparkle (Shift+Q) — charges a giant cosmetic laser
+    this._sparkleChargeStart = 0;
     this.input.keyboard.on('keydown-Q', (e) => {
       if (e.shiftKey) {
         const wizard = this.wizards.get(this.localPlayerId);
-        if (wizard) wizard.sparkle = !wizard.sparkle;
+        if (!wizard) return;
+        wizard.sparkle = !wizard.sparkle;
+        if (wizard.sparkle) {
+          this._sparkleChargeStart = Date.now();
+        } else {
+          this._sparkleChargeStart = 0;
+        }
       }
     });
 
@@ -299,6 +306,13 @@ export class GameScene extends Phaser.Scene {
       this.events.emit('modifier-result', data);
     };
 
+    // Laser VFX from other players
+    network.onLaser = (data) => {
+      if (data && this._isFiniteNum(data.x) && this._isFiniteNum(data.y)) {
+        this._drawLaser(data.x, data.y, data.nx, data.ny);
+      }
+    };
+
     // Shop messages (arena mode, client side)
     network.onShowShop = (data) => {
       this.shopOpen = true;
@@ -337,6 +351,7 @@ export class GameScene extends Phaser.Scene {
       network.onUpgradeApplied = null;
       network.onShowModifierVote = null;
       network.onModifierResult = null;
+      network.onLaser = null;
       network.onShowShop = null;
       network.onShopClosed = null;
       network.onShopUpdate = null;
@@ -683,7 +698,10 @@ export class GameScene extends Phaser.Scene {
     if (!data) return;
     const globalUpg = GLOBAL_UPGRADES.find((u) => u.id === upgradeId);
     if (!globalUpg) return;
-    if (!this.goldManager.spend(peerId, globalUpg.price)) return;
+    // Calculate scaled price based on previous purchases
+    const timesBought = data.purchasedUpgrades.filter((id) => id === upgradeId).length;
+    const actualPrice = globalUpg.price + (globalUpg.priceIncrease || 0) * timesBought;
+    if (!this.goldManager.spend(peerId, actualPrice)) return;
     globalUpg.apply(data.globalUpgrades);
     data.purchasedUpgrades.push(upgradeId);
     this._broadcastShopState();
@@ -1377,28 +1395,35 @@ export class GameScene extends Phaser.Scene {
     this.arena.constrainToWall(wizard);
     this.playerBlinkTimes.set(playerId, Date.now());
 
-    // Blink knockback shockwave
+    // Blink knockback shockwave — pushes from BOTH origin AND destination
     if (blinkKB > 0) {
       const shockwaveRange = 140;
-      this.wizards.forEach((other) => {
-        if (other.playerId === playerId || !other.alive) return;
-        const dx = other.x - oldX;
-        const dy = other.y - oldY;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        if (dist < shockwaveRange) {
-          const force = blinkKB * (1 - dist / shockwaveRange);
-          other.applyKnockback((dx / dist) * force, (dy / dist) * force);
-        }
-      });
+      const shockPoints = [{ x: oldX, y: oldY }, { x: wizard.x, y: wizard.y }];
+      const hitByShockwave = new Set();
 
-      const shockwave = this.add.graphics();
-      this._blinkFxList.push(shockwave);
-      shockwave.lineStyle(3, 0x4fc3f7, 0.7);
-      shockwave.strokeCircle(oldX, oldY, 10);
-      this.tweens.add({
-        targets: shockwave,
-        scaleX: 4, scaleY: 4, alpha: 0, duration: 350,
-        onComplete: () => { shockwave.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== shockwave); },
+      shockPoints.forEach((pt) => {
+        this.wizards.forEach((other) => {
+          if (other.playerId === playerId || !other.alive || hitByShockwave.has(other.playerId)) return;
+          const dx = other.x - pt.x;
+          const dy = other.y - pt.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          if (dist < shockwaveRange) {
+            hitByShockwave.add(other.playerId);
+            const force = blinkKB * (1 - dist / shockwaveRange);
+            other.applyKnockback((dx / dist) * force, (dy / dist) * force);
+          }
+        });
+
+        // VFX at each point
+        const shockwave = this.add.graphics();
+        this._blinkFxList.push(shockwave);
+        shockwave.lineStyle(3, 0x4fc3f7, 0.7);
+        shockwave.strokeCircle(pt.x, pt.y, 10);
+        this.tweens.add({
+          targets: shockwave,
+          scaleX: 5, scaleY: 5, alpha: 0, duration: 400,
+          onComplete: () => { shockwave.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== shockwave); },
+        });
       });
     }
 
@@ -1609,6 +1634,14 @@ export class GameScene extends Phaser.Scene {
         this._executeBlink(peerId, blinkDirX, blinkDirY);
         break;
       }
+      case 'laser': {
+        // Client fired a cosmetic laser — draw it on host and forward to all clients
+        if (this._isFiniteNum(data.x) && this._isFiniteNum(data.y) && this._isFiniteNum(data.nx) && this._isFiniteNum(data.ny)) {
+          this._drawLaser(data.x, data.y, data.nx, data.ny);
+          network.broadcastToClients({ type: 'laser', x: data.x, y: data.y, nx: data.nx, ny: data.ny });
+        }
+        break;
+      }
     }
   }
 
@@ -1628,6 +1661,41 @@ export class GameScene extends Phaser.Scene {
       }
     } else {
       this._clientUpdate(delta);
+    }
+
+    // Secret sparkle laser — fires after 3s of charging
+    const localWiz = this.wizards.get(this.localPlayerId);
+    if (localWiz && localWiz.sparkle && this._sparkleChargeStart > 0 && !this._sparkleLaserFired) {
+      const chargeTime = Date.now() - this._sparkleChargeStart;
+      if (chargeTime >= 3000) {
+        this._sparkleLaserFired = true;
+        const pointer = this.input.activePointer;
+        const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const dx = worldPt.x - localWiz.x;
+        const dy = worldPt.y - localWiz.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+
+        this._drawLaser(localWiz.x, localWiz.y, dx / len, dy / len);
+
+        // Broadcast to all other players
+        if (network.isHost && !this.testMode) {
+          network.broadcastToClients({ type: 'laser', x: localWiz.x, y: localWiz.y, nx: dx / len, ny: dy / len });
+        } else if (!network.isHost) {
+          // Client sends to host, host forwards to others
+          network.sendInput({ type: 'input', action: 'laser', x: localWiz.x, y: localWiz.y, nx: dx / len, ny: dy / len });
+        }
+
+        // Reset sparkle after laser
+        setTimeout(() => {
+          this._sparkleLaserFired = false;
+          const wiz = this.wizards.get(this.localPlayerId);
+          if (wiz) wiz.sparkle = false;
+          this._sparkleChargeStart = 0;
+        }, 1500);
+      }
+    }
+    if (localWiz && !localWiz.sparkle) {
+      this._sparkleLaserFired = false;
     }
 
     this.arena.draw();
@@ -1786,6 +1854,35 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  _drawLaser(x, y, nx, ny) {
+    const laser = this.add.graphics();
+    laser.setDepth(15);
+    const beamLen = 2000;
+    const beamWidth = 60;
+    const colors = [0xff0000, 0xff8800, 0xffff00, 0x00ff00, 0x0088ff, 0x8800ff, 0xff00ff];
+
+    for (let c = 0; c < colors.length; c++) {
+      const offset = (c - 3) * (beamWidth / colors.length);
+      const perpX = -ny * offset;
+      const perpY = nx * offset;
+      laser.lineStyle(beamWidth / colors.length + 2, colors[c], 0.7);
+      laser.beginPath();
+      laser.moveTo(x + perpX, y + perpY);
+      laser.lineTo(x + perpX + nx * beamLen, y + perpY + ny * beamLen);
+      laser.strokePath();
+    }
+    laser.lineStyle(8, 0xffffff, 0.9);
+    laser.beginPath();
+    laser.moveTo(x, y);
+    laser.lineTo(x + nx * beamLen, y + ny * beamLen);
+    laser.strokePath();
+
+    this.tweens.add({
+      targets: laser, alpha: 0, duration: 1500,
+      onComplete: () => laser.destroy(),
+    });
   }
 
   _onWizardKill(killerId, victim) {

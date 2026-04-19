@@ -1040,12 +1040,12 @@ export class UIScene extends Phaser.Scene {
     draw('normal');
     this.shopContainer.add(rowBg);
 
-    this.shopContainer.add(this.add.text(rowX + 10, rowY + 5, label, {
-      fontSize: '10px', color: '#ccc',
+    this.shopContainer.add(this.add.text(rowX + 10, rowY + 4, label, {
+      fontSize: '12px', color: '#ccc',
     }));
 
-    this.shopContainer.add(this.add.text(rowX + rowW - 10, rowY + 5, priceStr, {
-      fontSize: '10px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
+    this.shopContainer.add(this.add.text(rowX + rowW - 10, rowY + 4, priceStr, {
+      fontSize: '12px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
     }).setOrigin(1, 0));
 
     const zone = this.add.zone(rowX + rowW / 2, rowY + rowH / 2, rowW, rowH).setInteractive({ useHandCursor: true });
@@ -1090,11 +1090,11 @@ export class UIScene extends Phaser.Scene {
       if (rem <= 0 && this._shopTimerEvent) { this._shopTimerEvent.remove(); this._shopTimerEvent = null; }
     }});
 
-    this.shopContainer.add(this.add.text(0, -h / 2 + 12, 'SHOP', {
-      fontSize: '20px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 2,
+    this.shopContainer.add(this.add.text(0, -h / 2 + 14, 'SHOP', {
+      fontSize: '28px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5));
-    this.shopContainer.add(this.add.text(0, -h / 2 + 36, `Gold: ${gold}`, {
-      fontSize: '13px', color: '#ffa726', fontStyle: 'bold',
+    this.shopContainer.add(this.add.text(0, -h / 2 + 42, `Gold: ${gold}`, {
+      fontSize: '16px', color: '#ffa726', fontStyle: 'bold',
     }).setOrigin(0.5));
 
     // ---- Spell category columns (compact) ----
@@ -1111,7 +1111,7 @@ export class UIScene extends Phaser.Scene {
       const colorHex = '#' + catDef.color.toString(16).padStart(6, '0');
 
       this.shopContainer.add(this.add.text(colX + colW / 2, spellTopY, catDef.label, {
-        fontSize: '10px', color: colorHex, fontStyle: 'bold',
+        fontSize: '13px', color: colorHex, fontStyle: 'bold',
       }).setOrigin(0.5));
 
       const spellIds = SPELLS_BY_CATEGORY[cat];
@@ -1141,12 +1141,12 @@ export class UIScene extends Phaser.Scene {
         this.shopContainer.add(icon);
 
         this.shopContainer.add(this.add.text(cx, cy + 4, def.name, {
-          fontSize: '10px', color: '#fff', fontStyle: 'bold',
+          fontSize: '13px', color: '#fff', fontStyle: 'bold',
         }).setOrigin(0.5));
 
         const priceLabel = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
         this.shopContainer.add(this.add.text(cx, cy + cardH / 2 - 10, priceLabel, {
-          fontSize: '9px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
+          fontSize: '12px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
         }).setOrigin(0.5));
 
         if (!isEquipped) {
@@ -1172,7 +1172,7 @@ export class UIScene extends Phaser.Scene {
     // ---- Blink variants (compact row) ----
     const blinkTopY = spellTopY + 16 + 3 * (cardH + 4) + 10;
     this.shopContainer.add(this.add.text(0, blinkTopY, 'BLINK (Space)', {
-      fontSize: '10px', color: '#4fc3f7', fontStyle: 'bold',
+      fontSize: '13px', color: '#4fc3f7', fontStyle: 'bold',
     }).setOrigin(0.5));
 
     const blinkCardW = Math.min(120, (w - 60) / 3);
@@ -1198,12 +1198,12 @@ export class UIScene extends Phaser.Scene {
       this.shopContainer.add(card);
 
       this.shopContainer.add(this.add.text(cx, cy - 8, def.name, {
-        fontSize: '9px', color: '#fff', fontStyle: 'bold',
+        fontSize: '12px', color: '#fff', fontStyle: 'bold',
       }).setOrigin(0.5));
 
       const label = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
       this.shopContainer.add(this.add.text(cx, cy + 10, label, {
-        fontSize: '8px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
+        fontSize: '11px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
       }).setOrigin(0.5));
 
       if (!isEquipped) {
@@ -1227,11 +1227,11 @@ export class UIScene extends Phaser.Scene {
     // ---- Upgrades section (compact rows) ----
     const upgTopY = blinkTopY + 14 + blinkCardH + 8;
     this.shopContainer.add(this.add.text(-w / 2 + 20, upgTopY, 'UPGRADES', {
-      fontSize: '10px', color: '#4fc3f7', fontStyle: 'bold',
+      fontSize: '14px', color: '#4fc3f7', fontStyle: 'bold',
     }));
 
     let rowY = upgTopY + 16;
-    const rowH = 22;
+    const rowH = 26;
     const rowW = w - 50;
     const rowX = -w / 2 + 20;
 

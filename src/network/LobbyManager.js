@@ -187,6 +187,8 @@ export class LobbyManager {
 
     network.onGameStart = (data) => {
       this.lobby.classList.add('hidden');
+      const pageContent = document.getElementById('page-content');
+      if (pageContent) pageContent.style.display = 'none';
       if (this.onGameStart) this.onGameStart(data);
     };
   }

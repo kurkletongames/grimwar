@@ -187,12 +187,12 @@ export const SPELL_DEFS = {
       explosionRadius: 110, cooldownReduction: 0,
     },
     tiers: {
-      1: { title: 'Infernal Impact', desc: 'Damage +8, Explosion +15', price: 75,
-           apply: (s) => { s.damage += 8; s.explosionRadius += 15; } },
-      2: { title: 'Widened Crater', desc: 'Explosion +20, KB +200, CD -400ms', price: 125,
-           apply: (s) => { s.explosionRadius += 20; s.knockback += 200; s.cooldownReduction += 400; } },
-      3: { title: 'Apocalypse', desc: 'Damage +12, Explosion +25, KB +300', price: 175,
-           apply: (s) => { s.damage += 12; s.explosionRadius += 25; s.knockback += 300; } },
+      1: { title: 'Infernal Impact', desc: 'Damage +4, Explosion +10', price: 75,
+           apply: (s) => { s.damage += 4; s.explosionRadius += 10; } },
+      2: { title: 'Widened Crater', desc: 'Explosion +10, KB +100, CD -300ms', price: 125,
+           apply: (s) => { s.explosionRadius += 10; s.knockback += 100; s.cooldownReduction += 300; } },
+      3: { title: 'Apocalypse', desc: 'Damage +6, Explosion +10, KB +150', price: 175,
+           apply: (s) => { s.damage += 6; s.explosionRadius += 10; s.knockback += 150; } },
     },
   },
 

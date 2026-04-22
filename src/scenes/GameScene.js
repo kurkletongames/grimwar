@@ -1935,6 +1935,123 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  _playDeathVfx(wizard) {
+    const vx = wizard.x;
+    const vy = wizard.y;
+    const col = wizard.color;
+
+    // 1) Bright white flash
+    const flash = this.add.graphics();
+    flash.fillStyle(0xffffff, 0.9);
+    flash.fillCircle(0, 0, 24);
+    flash.x = vx;
+    flash.y = vy;
+    this.tweens.add({
+      targets: flash,
+      scaleX: 3, scaleY: 3, alpha: 0,
+      duration: 200, ease: 'Quad.easeOut',
+      onComplete: () => flash.destroy(),
+    });
+
+    // 2) Expanding shockwave ring
+    const ring = this.add.graphics();
+    ring.lineStyle(3, col, 0.8);
+    ring.strokeCircle(0, 0, 18);
+    ring.x = vx; ring.y = vy;
+    this.tweens.add({
+      targets: ring,
+      scaleX: 5, scaleY: 5, alpha: 0,
+      duration: 500, ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+
+    // 3) Second slower shockwave
+    const ring2 = this.add.graphics();
+    ring2.lineStyle(2, 0xffffff, 0.4);
+    ring2.strokeCircle(0, 0, 14);
+    ring2.x = vx; ring2.y = vy;
+    this.tweens.add({
+      targets: ring2,
+      scaleX: 7, scaleY: 7, alpha: 0,
+      duration: 700, ease: 'Cubic.easeOut',
+      onComplete: () => ring2.destroy(),
+    });
+
+    // 4) Chunky particle explosion — fast outer burst
+    for (let i = 0; i < 16; i++) {
+      const angle = (i / 16) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+      const dist = 50 + Math.random() * 60;
+      const size = 2 + Math.random() * 4;
+      const p = this.add.graphics();
+      p.fillStyle(col, 1);
+      p.fillCircle(0, 0, size);
+      p.x = vx; p.y = vy;
+      this.tweens.add({
+        targets: p,
+        x: vx + Math.cos(angle) * dist, y: vy + Math.sin(angle) * dist,
+        alpha: 0, scaleX: 0.2, scaleY: 0.2,
+        duration: 300 + Math.random() * 200, ease: 'Quad.easeOut',
+        onComplete: () => p.destroy(),
+      });
+    }
+
+    // 5) Larger slow chunks (body fragments)
+    for (let i = 0; i < 6; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 40;
+      const size = 5 + Math.random() * 5;
+      const chunk = this.add.graphics();
+      chunk.fillStyle(col, 0.85);
+      chunk.fillCircle(0, 0, size);
+      chunk.fillStyle(col, 0.4);
+      chunk.fillCircle(0, 0, size * 0.5);
+      chunk.x = vx; chunk.y = vy;
+      this.tweens.add({
+        targets: chunk,
+        x: vx + Math.cos(angle) * dist, y: vy + Math.sin(angle) * dist - 15,
+        alpha: 0, scaleX: 0.4, scaleY: 0.4, angle: Math.random() * 360,
+        duration: 500 + Math.random() * 300, ease: 'Quad.easeOut',
+        onComplete: () => chunk.destroy(),
+      });
+    }
+
+    // 6) Rising ghost silhouette
+    const ghost = this.add.graphics();
+    ghost.fillStyle(col, 0.3);
+    ghost.fillCircle(0, 0, 18);
+    ghost.fillStyle(0xffffff, 0.5);
+    ghost.fillCircle(-6, -3, 4);
+    ghost.fillCircle(6, -3, 4);
+    ghost.x = vx; ghost.y = vy;
+    this.tweens.add({
+      targets: ghost,
+      y: vy - 80, alpha: 0, scaleX: 0.6, scaleY: 1.3,
+      duration: 1000, ease: 'Quad.easeOut',
+      onComplete: () => ghost.destroy(),
+    });
+
+    // 7) Lingering embers floating upward
+    for (let i = 0; i < 10; i++) {
+      const ember = this.add.graphics();
+      const eSize = 1 + Math.random() * 2;
+      const bright = Math.random() > 0.5 ? 0xffaa33 : col;
+      ember.fillStyle(bright, 0.8);
+      ember.fillCircle(0, 0, eSize);
+      ember.x = vx + (Math.random() - 0.5) * 30;
+      ember.y = vy + (Math.random() - 0.5) * 20;
+      this.tweens.add({
+        targets: ember,
+        x: ember.x + (Math.random() - 0.5) * 40,
+        y: ember.y - 40 - Math.random() * 50,
+        alpha: 0,
+        duration: 800 + Math.random() * 700,
+        delay: 100 + Math.random() * 300,
+        ease: 'Sine.easeOut',
+        onComplete: () => ember.destroy(),
+      });
+    }
+  }
+
   _onWizardKill(killerId, victim) {
     if (!killerId || !victim) return;
     // Prevent double-counting the same death in one frame
@@ -1966,27 +2083,9 @@ export class GameScene extends Phaser.Scene {
     });
     this.bountyTarget = newBounty;
 
-    // Death burst VFX (using tweens for auto-cleanup)
-    for (let i = 0; i < 10; i++) {
-      const angle = (i / 10) * Math.PI * 2;
-      const dist = 40 + Math.random() * 50;
-      const particle = this.add.graphics();
-      const size = 3 + Math.random() * 3;
-      particle.fillStyle(victim.color, 0.9);
-      particle.fillCircle(0, 0, size);
-      particle.x = victim.x;
-      particle.y = victim.y;
-      this.tweens.add({
-        targets: particle,
-        x: victim.x + Math.cos(angle) * dist,
-        y: victim.y + Math.sin(angle) * dist,
-        alpha: 0,
-        scaleX: 0.3,
-        scaleY: 0.3,
-        duration: 400 + Math.random() * 200,
-        onComplete: () => particle.destroy(),
-      });
-    }
+    this._playDeathVfx(victim);
+    // 8) Screen shake
+    this.cameras.main.shake(250, 0.008);
 
     // Emit kill event for UI
     const killerName = this.playerInfo.find((p) => p.peerId === killerId)?.name || 'Unknown';
@@ -2065,7 +2164,19 @@ export class GameScene extends Phaser.Scene {
 
     // Environmental hazards
     if (this.hazardManager) {
+      // Track alive state before hazards for death VFX
+      const preHazardAlive = new Map();
+      this.wizards.forEach((w) => preHazardAlive.set(w.playerId, w.alive));
+
       this.hazardManager.update(delta, this.wizards, this.arena);
+
+      // Play death VFX for wizards killed by environmental hazards
+      this.wizards.forEach((w) => {
+        if (preHazardAlive.get(w.playerId) && !w.alive) {
+          this._playDeathVfx(w);
+          this.cameras.main.shake(250, 0.008);
+        }
+      });
     }
 
     const now = Date.now();
@@ -2372,18 +2483,22 @@ export class GameScene extends Phaser.Scene {
       return true;
     });
 
-    // Track pre-lava alive state for kill credit
+    // Track pre-lava alive state for death detection
     const preLavaAlive = new Map();
-    if (this.gameMode === 'arena') {
-      this.wizards.forEach((w) => preLavaAlive.set(w.playerId, w.alive));
-    }
+    this.wizards.forEach((w) => preLavaAlive.set(w.playerId, w.alive));
 
     this.arena.applyLavaDamage(this.wizards, delta);
 
-    // Award kill gold if someone died to lava and had a lastHitBy
+    // Handle lava deaths — play VFX for all, award kill credit if someone hit them
     this.wizards.forEach((w) => {
-      if (preLavaAlive.get(w.playerId) && !w.alive && w.lastHitBy) {
-        this._onWizardKill(w.lastHitBy, w);
+      if (preLavaAlive.get(w.playerId) && !w.alive) {
+        if (w.lastHitBy) {
+          this._onWizardKill(w.lastHitBy, w);
+        } else {
+          // No killer — still play death VFX and screen shake
+          this._playDeathVfx(w);
+          this.cameras.main.shake(250, 0.008);
+        }
       }
     });
 
@@ -2854,7 +2969,15 @@ export class GameScene extends Phaser.Scene {
     if (data.wizards) {
       data.wizards.forEach((ws) => {
         const wizard = this.wizards.get(ws.playerId);
-        if (wizard) wizard.applyState(ws);
+        if (wizard) {
+          const wasAlive = wizard.alive;
+          wizard.applyState(ws);
+          // Play death VFX on alive→dead transition
+          if (wasAlive && !wizard.alive) {
+            this._playDeathVfx(wizard);
+            this.cameras.main.shake(250, 0.008);
+          }
+        }
       });
     }
 

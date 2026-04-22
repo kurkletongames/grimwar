@@ -255,12 +255,13 @@ export class Tether {
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     if (dist < this.radius * 2 + wizard.radius) {
-      // No damage — just link
+      // No damage — just link + mark Vulnerable for the whole tether (+1s grace)
       this.phase = 'tethered';
       this.targetPlayerId = wizard.playerId;
       this.tetherStartTime = Date.now();
       this.velX = 0;
       this.velY = 0;
+      wizard.applyVulnerable(this.tetherDuration + 1000);
       return 0;
     }
     return 0;

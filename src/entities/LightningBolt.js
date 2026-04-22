@@ -134,7 +134,10 @@ export class LightningBolt {
       if (dist < this.strikeRadius + wizard.radius) {
         this.hitTargets.add(wizard.playerId);
         const falloff = 1 - Math.min(1, dist / this.strikeRadius);
-        const dmg = Math.round(this.damage * (0.5 + 0.5 * falloff));
+        const wasVuln = wizard.isVulnerable();
+        const dmgMult = wizard.getDamageMult();
+        const kbMult = wizard.getKnockbackMult();
+        const dmg = Math.round(this.damage * (0.5 + 0.5 * falloff) * dmgMult);
 
         const prevHealth = wizard.health;
         wizard.takeDamage(dmg);
@@ -144,9 +147,16 @@ export class LightningBolt {
         const kbDir = dist > 0 ? { x: -dx / dist, y: -dy / dist } : { x: 0, y: -1 };
         const kbStrength = 0.5 + 0.5 * falloff; // 50% at edge, 100% at center
         wizard.applyKnockback(
-          kbDir.x * this.knockback * kbStrength,
-          kbDir.y * this.knockback * kbStrength,
+          kbDir.x * this.knockback * kbStrength * kbMult,
+          kbDir.y * this.knockback * kbStrength * kbMult,
         );
+
+        if (wasVuln && dealt > 0) {
+          this.scene.events.emit('vulnerable-hit', { x: wizard.x, y: wizard.y, dealt, ownerId: this.ownerPlayerId });
+        }
+
+        // Lightning applies Vulnerable for 3s — pay off with follow-up spells
+        wizard.applyVulnerable(3000);
 
         hits.push({ wizard, dealt });
       }

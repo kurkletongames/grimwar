@@ -203,7 +203,10 @@ export class Meteor {
       if (dist < this.explosionRadius + wizard.radius) {
         this.hitTargets.add(wizard.playerId);
         const falloff = 1 - Math.min(1, dist / this.explosionRadius);
-        const dmg = Math.round(this.damage * (0.4 + 0.6 * falloff));
+        const wasVuln = wizard.isVulnerable();
+        const dmgMult = wizard.getDamageMult();
+        const kbMult = wizard.getKnockbackMult();
+        const dmg = Math.round(this.damage * (0.4 + 0.6 * falloff) * dmgMult);
 
         const prevHealth = wizard.health;
         wizard.takeDamage(dmg);
@@ -211,9 +214,13 @@ export class Meteor {
 
         const kbDir = dist > 0 ? { x: -dx / dist, y: -dy / dist } : { x: 0, y: -1 };
         wizard.applyKnockback(
-          kbDir.x * this.knockback * falloff,
-          kbDir.y * this.knockback * falloff,
+          kbDir.x * this.knockback * falloff * kbMult,
+          kbDir.y * this.knockback * falloff * kbMult,
         );
+
+        if (wasVuln && dealt > 0) {
+          this.scene.events.emit('vulnerable-hit', { x: wizard.x, y: wizard.y, dealt, ownerId: this.ownerPlayerId });
+        }
 
         hits.push({ wizard, dealt });
       }

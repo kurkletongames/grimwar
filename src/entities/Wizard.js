@@ -1,4 +1,4 @@
-import Phaser from 'phaser';
+import * as Phaser from 'phaser';
 
 const WIZARD_RADIUS = 18;
 const WIZARD_SPEED = 85;
@@ -55,6 +55,12 @@ export class Wizard {
     this.sparkle = false; // secret sparkle effect
     this._sparkleTimer = 0;
 
+    // Vulnerable mark — amplifies incoming damage/KB, applied by certain spells
+    this.vulnerableUntil = 0;     // timestamp when mark expires
+    this.vulnerableAppliedAt = 0; // timestamp of most recent (re)application
+    this.vulnerableDuration = 0;  // duration of most recent application, for ring fade
+    this.markGraphics = scene.add.graphics();
+
     // Rush dash state
     this.dashing = false;
     this.dashDir = { x: 0, y: 0 };
@@ -91,6 +97,9 @@ export class Wizard {
     this.healthBarBg.setAlpha(alpha);
     this.cooldownGraphics.setAlpha(alpha);
     this.glowGraphics.setAlpha(alpha);
+    this.markGraphics.setAlpha(alpha);
+
+    this._drawVulnerableMark();
 
     // Blink ready glow (drawn behind wizard)
     this.glowGraphics.clear();
@@ -375,6 +384,64 @@ export class Wizard {
     }
   }
 
+  _drawVulnerableMark() {
+    this.markGraphics.clear();
+    if (!this.alive) return;
+    const now = Date.now();
+    if (this.vulnerableUntil <= now) return;
+
+    const timeLeft = this.vulnerableUntil - now;
+    const duration = this.vulnerableDuration || 2000;
+    const lifePct = Math.max(0, Math.min(1, timeLeft / duration));
+
+    // Flash-in: first 200ms after application, scale the ring up from 1.4x
+    const sinceApplied = now - this.vulnerableAppliedAt;
+    const flashIn = sinceApplied < 200 ? 1 + (1 - sinceApplied / 200) * 0.5 : 1;
+
+    // Last 500ms: urgency flicker so players know to capitalize
+    const ending = timeLeft < 500;
+    const flicker = ending ? (0.5 + Math.sin(now * 0.035) * 0.5) : 1;
+
+    // Pulsing scale (2 Hz)
+    const pulse = 0.93 + Math.sin(now * 0.012) * 0.07;
+    const ringR = 32 * pulse * flashIn;
+
+    // Ground ring — primary tell
+    this.markGraphics.lineStyle(3, 0xff3322, 0.8 * flicker);
+    this.markGraphics.strokeCircle(this.x, this.y + this.radius * 0.6, ringR);
+    this.markGraphics.lineStyle(1.5, 0xff8844, 0.4 * flicker);
+    this.markGraphics.strokeCircle(this.x, this.y + this.radius * 0.6, ringR * 0.75);
+
+    // Ring fill gradient — faint red wash
+    this.markGraphics.fillStyle(0xff3322, 0.08 * lifePct * flicker);
+    this.markGraphics.fillCircle(this.x, this.y + this.radius * 0.6, ringR);
+
+    // Rim glow on wizard body
+    this.markGraphics.lineStyle(2, 0xff4422, 0.5 * flicker);
+    this.markGraphics.strokeCircle(this.x, this.y, this.radius + 3);
+
+    // Floating chevron above head — bobs gently
+    if (!ending || flicker > 0.5) {
+      const bob = Math.sin(now * 0.006) * 2;
+      const cx = this.x;
+      const cy = this.y - this.radius - 34 + bob;
+      this.markGraphics.fillStyle(0xff3322, 0.95 * flicker);
+      // Downward-pointing chevron ▼
+      this.markGraphics.fillTriangle(
+        cx - 7, cy - 4,
+        cx + 7, cy - 4,
+        cx,     cy + 5,
+      );
+      // Inner highlight
+      this.markGraphics.fillStyle(0xffaa66, 0.8 * flicker);
+      this.markGraphics.fillTriangle(
+        cx - 4, cy - 2,
+        cx + 4, cy - 2,
+        cx,     cy + 2,
+      );
+    }
+  }
+
   setCooldowns(fireballPct, blinkReady, blinkPct) {
     this.fireballCooldownPct = fireballPct;
     this.blinkCooldownPct = blinkPct || 0;
@@ -420,6 +487,40 @@ export class Wizard {
 
   isSlowed() {
     return this.slowEffect && Date.now() < this.slowEffect.endTime;
+  }
+
+  /**
+   * Apply/refresh the Vulnerable mark. Extends to `now + duration`, never shortens.
+   * Returns true if this call actually started a new mark (was not vulnerable before).
+   */
+  applyVulnerable(duration) {
+    if (!this.alive) return false;
+    const now = Date.now();
+    const newUntil = now + duration;
+    const wasVulnerable = this.vulnerableUntil > now;
+    if (newUntil > this.vulnerableUntil) {
+      this.vulnerableUntil = newUntil;
+      this.vulnerableDuration = duration;
+      this.vulnerableAppliedAt = now;
+    }
+    if (!wasVulnerable) {
+      this.scene.events.emit('vulnerable-applied', { playerId: this.playerId, x: this.x, y: this.y });
+      return true;
+    }
+    return false;
+  }
+
+  isVulnerable() {
+    return this.vulnerableUntil > Date.now();
+  }
+
+  getDamageMult() {
+    return this.isVulnerable() ? 1.2 : 1.0;
+  }
+
+  getKnockbackMult() {
+    if (this.tethered) return 1.5;
+    return this.isVulnerable() ? 1.35 : 1.0;
   }
 
   update(delta) {
@@ -473,16 +574,20 @@ export class Wizard {
     this.y += this.knockbackVel.y * dt;
 
     // Apply friction — reduced/disabled by tether and gravity
+    // Normalize to 60fps so friction behaves the same at any framerate
+    const dt60 = delta / (1000 / 60);
     if (this.tethered) {
       // No friction at all while tethered
     } else if (this.inGravity) {
       // Reduced friction while in gravity pull (harder to escape)
-      this.knockbackVel.x *= 0.995;
-      this.knockbackVel.y *= 0.995;
+      const gravFricPow = Math.pow(0.995, dt60);
+      this.knockbackVel.x *= gravFricPow;
+      this.knockbackVel.y *= gravFricPow;
     } else {
       const fric = this._modFrictionOverride || FRICTION;
-      this.knockbackVel.x *= fric;
-      this.knockbackVel.y *= fric;
+      const fricPow = Math.pow(fric, dt60);
+      this.knockbackVel.x *= fricPow;
+      this.knockbackVel.y *= fricPow;
       if (Math.abs(this.knockbackVel.x) < FRICTION_THRESHOLD) this.knockbackVel.x = 0;
       if (Math.abs(this.knockbackVel.y) < FRICTION_THRESHOLD) this.knockbackVel.y = 0;
     }
@@ -508,6 +613,13 @@ export class Wizard {
       dashDir: this.dashing ? { ...this.dashDir } : null,
       dashSpeed: this.dashing ? this.dashSpeed : 0,
       dashRemaining: this.dashing ? this.dashRemaining : 0,
+      vulnerableUntil: this.vulnerableUntil,
+      vulnerableAppliedAt: this.vulnerableAppliedAt,
+      vulnerableDuration: this.vulnerableDuration,
+      tethered: this.tethered,
+      maxHealth: this.maxHealth,
+      slowEffect: this.slowEffect,
+      inGravity: this.inGravity,
     };
   }
 
@@ -540,6 +652,20 @@ export class Wizard {
     } else if (!state.dashing) {
       this.dashing = false;
     }
+
+    // Sync vulnerable mark
+    if (state.vulnerableUntil !== undefined) {
+      this.vulnerableUntil = state.vulnerableUntil;
+      this.vulnerableAppliedAt = state.vulnerableAppliedAt || 0;
+      this.vulnerableDuration = state.vulnerableDuration || 0;
+    }
+
+    // Sync tethered, maxHealth, slowEffect, inGravity
+    this.tethered = state.tethered || false;
+    if (state.maxHealth) this.maxHealth = state.maxHealth;
+    this.slowEffect = state.slowEffect || 0;
+    this.inGravity = state.inGravity || false;
+
     this.draw();
   }
 
@@ -547,6 +673,7 @@ export class Wizard {
     this.graphics.destroy();
     this.cooldownGraphics.destroy();
     this.glowGraphics.destroy();
+    this.markGraphics.destroy();
     this.nameText.destroy();
     this.healthBar.destroy();
     this.healthBarBg.destroy();

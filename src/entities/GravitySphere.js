@@ -124,6 +124,9 @@ export class GravitySphere {
         // Mark wizard as in gravity (reduces friction in Wizard.update)
         wizard.inGravity = true;
 
+        // Apply/refresh Vulnerable — persists 2s after leaving radius
+        wizard.applyVulnerable(2000);
+
         // Strong pull — apply directly to knockback velocity
         const pullForce = this.pullStrength * (0.3 + factor * 0.7) * dt;
         wizard.knockbackVel.x += nx * pullForce;

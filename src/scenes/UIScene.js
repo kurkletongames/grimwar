@@ -1,4 +1,4 @@
-import Phaser from 'phaser';
+import * as Phaser from 'phaser';
 import { WIZARD_COLORS } from '../entities/Wizard.js';
 import { UPGRADES } from './GameScene.js';
 import { network } from '../network/NetworkManager.js';
@@ -132,7 +132,7 @@ export class UIScene extends Phaser.Scene {
     // ---- Events from GameScene ----
     const gameScene = this.scene.get('GameScene');
 
-    gameScene.events.on('game-started', (data) => {
+    this._onGameStarted = (data) => {
       this.playerInfo = data.players;
       this.scores = data.scores;
       this.winsToWin = data.winsToWin;
@@ -152,9 +152,10 @@ export class UIScene extends Phaser.Scene {
         this._drawSpellSlots();
         this._updateGoldDisplay(0);
       }
-    });
+    };
+    gameScene.events.on('game-started', this._onGameStarted);
 
-    gameScene.events.on('round-start', (roundNum) => {
+    this._onRoundStart = (roundNum) => {
       const modLabel = this._activeModifierName && this._activeModifierName !== 'No Modifier'
         ? ` — ${this._activeModifierName}` : '';
       this.roundText.setText(`Round ${roundNum}${modLabel}`);
@@ -168,9 +169,10 @@ export class UIScene extends Phaser.Scene {
       this.gameOverContainer.setVisible(false);
       this.shopContainer.setVisible(false);
       this.powerUpActive = false;
-    });
+    };
+    gameScene.events.on('round-start', this._onRoundStart);
 
-    gameScene.events.on('countdown', (num) => {
+    this._onCountdown = (num) => {
       if (num > 0) {
         this.countdownText.setText(num.toString());
         this.countdownText.setVisible(true);
@@ -193,60 +195,69 @@ export class UIScene extends Phaser.Scene {
           onComplete: () => this.countdownText.setVisible(false),
         });
       }
-    });
+    };
+    gameScene.events.on('countdown', this._onCountdown);
 
-    gameScene.events.on('round-over', (data) => {
+    this._onRoundOver = (data) => {
       this.roundOverText.setText(`${data.winnerName} wins the round!`);
       this.roundOverText.setVisible(true);
       this.scores = data.scores;
       this.winsToWin = data.winsToWin;
       this._drawScoreboard();
-    });
+    };
+    gameScene.events.on('round-over', this._onRoundOver);
 
-    gameScene.events.on('game-over', (data) => {
+    this._onGameOver = (data) => {
       this._showGameOver(data);
-    });
+    };
+    gameScene.events.on('game-over', this._onGameOver);
 
-    gameScene.events.on('game-extended', (data) => {
+    this._onGameExtended = (data) => {
       this.winsToWin = data.winsToWin;
       this._drawScoreboard();
-    });
+    };
+    gameScene.events.on('game-extended', this._onGameExtended);
 
-    gameScene.events.on('upgrade-waiting', (data) => {
+    this._onUpgradeWaiting = (data) => {
       if (data.remaining === 0) {
         // All picked — hide the container (round will start shortly)
         this.powerUpContainer.setVisible(false);
       } else if (this.waitingSubText) {
         this.waitingSubText.setText(`${data.remaining} of ${data.total} players still choosing...`);
       }
-    });
+    };
+    gameScene.events.on('upgrade-waiting', this._onUpgradeWaiting);
 
-    gameScene.events.on('show-powerup-selection', () => {
+    this._onShowPowerupSelection = () => {
       this._showPowerUpCards();
-    });
+    };
+    gameScene.events.on('show-powerup-selection', this._onShowPowerupSelection);
 
-    gameScene.events.on('winner-skip-upgrade', () => {
+    this._onWinnerSkipUpgrade = () => {
       this._showWinnerWaiting();
-    });
+    };
+    gameScene.events.on('winner-skip-upgrade', this._onWinnerSkipUpgrade);
 
     // Arena mode: shop events
-    gameScene.events.on('show-shop', (data) => {
+    this._onShowShop = (data) => {
       if (this.gameMode === 'arena') {
         this._localReady = false;
         this._shopReadyCount = { ready: 0, total: 0 };
         this._showShop(data);
       }
-    });
+    };
+    gameScene.events.on('show-shop', this._onShowShop);
 
-    gameScene.events.on('shop-closed', () => {
+    this._onShopClosed = () => {
       this.shopContainer.setVisible(false);
       if (this._shopTimerEvent) {
         this._shopTimerEvent.remove();
         this._shopTimerEvent = null;
       }
-    });
+    };
+    gameScene.events.on('shop-closed', this._onShopClosed);
 
-    gameScene.events.on('shop-update', (data) => {
+    this._onShopUpdate = (data) => {
       if (this.gameMode === 'arena') {
         // Update local slot data from shop purchases
         const localId = network.localPlayerId || gameScene.localPlayerId;
@@ -260,33 +271,39 @@ export class UIScene extends Phaser.Scene {
           this._showShop(data);
         }
       }
-    });
+    };
+    gameScene.events.on('shop-update', this._onShopUpdate);
 
-    gameScene.events.on('shop-ready-update', (data) => {
+    this._onShopReadyUpdate = (data) => {
       this._shopReadyCount = data;
       if (this._shopReadyText) {
         this._shopReadyText.setText(`${data.ready}/${data.total} Ready`);
       }
-    });
+    };
+    gameScene.events.on('shop-ready-update', this._onShopReadyUpdate);
 
     // Kill feed
-    gameScene.events.on('player-kill', (data) => {
+    this._onPlayerKill = (data) => {
       this._addKillFeedEntry(data.killerName, data.victimName);
-    });
+    };
+    gameScene.events.on('player-kill', this._onPlayerKill);
 
-    gameScene.events.on('spell-switched', (data) => {
+    this._onSpellSwitched = (data) => {
       this.currentSlots = data.slots;
       this.activeSpellSlot = data.activeSlot;
       this._drawSpellSlots();
-    });
+    };
+    gameScene.events.on('spell-switched', this._onSpellSwitched);
 
     // Round modifier vote (roguelike)
-    gameScene.events.on('show-modifier-vote', (data) => {
+    this._onShowModifierVote = (data) => {
       this._showModifierVote(data);
-    });
-    gameScene.events.on('modifier-result', (data) => {
+    };
+    gameScene.events.on('show-modifier-vote', this._onShowModifierVote);
+    this._onModifierResult = (data) => {
       this._showModifierResult(data);
-    });
+    };
+    gameScene.events.on('modifier-result', this._onModifierResult);
 
     // Clean up listeners and timers on shutdown
     this.events.on('shutdown', () => {
@@ -294,23 +311,23 @@ export class UIScene extends Phaser.Scene {
       this._slotCooldownGraphics = [];
       this._killFeedTexts.forEach((t) => t.destroy());
       this._killFeedTexts = [];
-      gameScene.events.off('game-started');
-      gameScene.events.off('round-start');
-      gameScene.events.off('countdown');
-      gameScene.events.off('round-over');
-      gameScene.events.off('game-over');
-      gameScene.events.off('game-extended');
-      gameScene.events.off('upgrade-waiting');
-      gameScene.events.off('show-powerup-selection');
-      gameScene.events.off('winner-skip-upgrade');
-      gameScene.events.off('show-shop');
-      gameScene.events.off('shop-closed');
-      gameScene.events.off('shop-update');
-      gameScene.events.off('shop-ready-update');
-      gameScene.events.off('spell-switched');
-      gameScene.events.off('show-modifier-vote');
-      gameScene.events.off('modifier-result');
-      gameScene.events.off('player-kill');
+      gameScene.events.off('game-started', this._onGameStarted);
+      gameScene.events.off('round-start', this._onRoundStart);
+      gameScene.events.off('countdown', this._onCountdown);
+      gameScene.events.off('round-over', this._onRoundOver);
+      gameScene.events.off('game-over', this._onGameOver);
+      gameScene.events.off('game-extended', this._onGameExtended);
+      gameScene.events.off('upgrade-waiting', this._onUpgradeWaiting);
+      gameScene.events.off('show-powerup-selection', this._onShowPowerupSelection);
+      gameScene.events.off('winner-skip-upgrade', this._onWinnerSkipUpgrade);
+      gameScene.events.off('show-shop', this._onShowShop);
+      gameScene.events.off('shop-closed', this._onShopClosed);
+      gameScene.events.off('shop-update', this._onShopUpdate);
+      gameScene.events.off('shop-ready-update', this._onShopReadyUpdate);
+      gameScene.events.off('spell-switched', this._onSpellSwitched);
+      gameScene.events.off('show-modifier-vote', this._onShowModifierVote);
+      gameScene.events.off('modifier-result', this._onModifierResult);
+      gameScene.events.off('player-kill', this._onPlayerKill);
     });
   }
 
@@ -999,6 +1016,7 @@ export class UIScene extends Phaser.Scene {
     // Max 5 visible
     if (this._killFeedTexts.length > 5) {
       const old = this._killFeedTexts.shift();
+      this.tweens.killTweensOf(old);
       old.destroy();
       this._killFeedTexts.forEach((t, i) => t.setY(50 + i * 16));
     }

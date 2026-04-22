@@ -27,6 +27,8 @@ export class VortexWall {
     this.velY = 0;
 
     this.pulsePhase = 0;
+    this._deflected = new Set();
+
     this.graphics = scene.add.graphics();
     this.draw();
   }
@@ -100,6 +102,7 @@ export class VortexWall {
   checkDeflect(projectile) {
     if (!this.alive || projectile.ownerPlayerId === this.ownerPlayerId) return false;
     if (projectile.spellId === 'vortex_wall') return false;
+    if (this._deflected.has(projectile)) return false;
 
     // Check if projectile is within the wall's bounding area
     // Project projectile position onto wall's local coordinate system
@@ -127,6 +130,7 @@ export class VortexWall {
     // Change ownership so it can now hit the original caster's enemies
     projectile.ownerPlayerId = this.ownerPlayerId;
 
+    this._deflected.add(projectile);
     return true;
   }
 
@@ -151,6 +155,7 @@ export class VortexWall {
   }
 
   destroy() {
+    this._deflected.clear();
     this.graphics.destroy();
   }
 }

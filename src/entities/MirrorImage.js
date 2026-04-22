@@ -115,7 +115,10 @@ export class MirrorImage {
         const falloff = 1 - dist / this.pulseRadius;
         const nx = dist > 0 ? dx / dist : 0;
         const ny = dist > 0 ? dy / dist : -1;
-        w.applyKnockback(nx * this.knockbackPulse * falloff, ny * this.knockbackPulse * falloff);
+        const kbMult = w.getKnockbackMult();
+        w.applyKnockback(nx * this.knockbackPulse * falloff * kbMult, ny * this.knockbackPulse * falloff * kbMult);
+        // Mirror pulse applies Vulnerable for 1.5s
+        w.applyVulnerable(1500);
       }
     });
   }

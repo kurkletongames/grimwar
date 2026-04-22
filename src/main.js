@@ -1,4 +1,4 @@
-import Phaser from 'phaser';
+import * as Phaser from 'phaser';
 import { GameScene } from './scenes/GameScene.js';
 import { UIScene } from './scenes/UIScene.js';
 
@@ -8,16 +8,8 @@ const config = {
   height: 960,
   parent: 'game-container',
   backgroundColor: '#1a1a2e',
-  disableVisibilityChange: true, // Keep running when tab is hidden
   roundPixels: true,
   antialias: true,
-  physics: {
-    default: 'arcade',
-    arcade: {
-      gravity: { y: 0 },
-      debug: false,
-    },
-  },
   scene: [GameScene, UIScene],
 };
 

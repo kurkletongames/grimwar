@@ -25,7 +25,7 @@ export const SPELL_DEFS = {
     category: 'fixed',
     color: 0xff6600,
     shopPrice: 0,
-    baseCooldown: 3750,
+    baseCooldown: 4000,
     baseStats: {
       speed: 250, damage: 15, knockback: 700, radius: 8,
       multishot: 1, piercing: false, cooldownReduction: 0, lifesteal: 0, selfKnockback: 0,
@@ -48,7 +48,7 @@ export const SPELL_DEFS = {
     category: 'bread_butter',
     color: 0x44ccff,
     shopPrice: 150,
-    baseCooldown: 3300,
+    baseCooldown: 4500,
     baseStats: {
       speed: 200, damage: 12, knockback: 500, radius: 6,
       turnRate: 0.4, lifetime: 4000, cooldownReduction: 0,
@@ -70,7 +70,7 @@ export const SPELL_DEFS = {
     category: 'bread_butter',
     color: 0x88ff44,
     shopPrice: 150,
-    baseCooldown: 2500,
+    baseCooldown: 4000,
     baseStats: {
       speed: 300, damage: 8, knockback: 250, radius: 5,
       maxBounces: 10, bounceRange: 280, bounceDmgBonus: 0.15, cooldownReduction: 0,
@@ -92,7 +92,7 @@ export const SPELL_DEFS = {
     category: 'bread_butter',
     color: 0xff44ff,
     shopPrice: 150,
-    baseCooldown: 4200,
+    baseCooldown: 5000,
     baseStats: {
       speed: 300, damage: 4, knockback: 200, radius: 4,
       projectileCount: 5, coneAngle: 0.6, lifetime: 600, cooldownReduction: 0,
@@ -115,7 +115,7 @@ export const SPELL_DEFS = {
     category: 'tricky',
     color: 0xff8844,
     shopPrice: 200,
-    baseCooldown: 7500,
+    baseCooldown: 8000,
     baseStats: {
       speed: 350, damage: 0, radius: 5,
       tetherDuration: 6000, pullForce: 900, tetherRange: 300, tetherDrain: 0.08, cooldownReduction: 0,
@@ -137,7 +137,7 @@ export const SPELL_DEFS = {
     category: 'tricky',
     color: 0x88aaff,
     shopPrice: 200,
-    baseCooldown: 8000,
+    baseCooldown: 9000,
     baseStats: {
       decoySpeed: 160, decoyDuration: 4000,
       knockbackPulse: 750, pulseRadius: 70, cooldownReduction: 0,
@@ -159,7 +159,7 @@ export const SPELL_DEFS = {
     category: 'tricky',
     color: 0x44ffcc,
     shopPrice: 200,
-    baseCooldown: 10800,
+    baseCooldown: 11000,
     baseStats: {
       wallDuration: 4000, wallLength: 90, wallThickness: 14, cooldownReduction: 0,
     },
@@ -181,7 +181,7 @@ export const SPELL_DEFS = {
     category: 'power',
     color: 0xcc2200,
     shopPrice: 250,
-    baseCooldown: 6000,
+    baseCooldown: 8000,
     baseStats: {
       speed: 150, damage: 25, knockback: 2000, radius: 28,
       explosionRadius: 110, cooldownReduction: 0,
@@ -203,7 +203,7 @@ export const SPELL_DEFS = {
     category: 'power',
     color: 0x9944ff,
     shopPrice: 250,
-    baseCooldown: 7000,
+    baseCooldown: 8500,
     baseStats: {
       speed: 120, damage: 15, radius: 8,
       pullStrength: 400, pullRadius: 140, lifetime: 6000, cooldownReduction: 0,
@@ -225,7 +225,7 @@ export const SPELL_DEFS = {
     category: 'power',
     color: 0xffff44,
     shopPrice: 250,
-    baseCooldown: 5000,
+    baseCooldown: 7500,
     baseStats: {
       damage: 15, knockback: 3600, strikeRadius: 70, strikeDelay: 845, cooldownReduction: 0,
     },
@@ -248,7 +248,7 @@ export const BLINK_DEFS = {
     desc: 'Standard short-range teleport.',
     color: 0x4fc3f7,
     shopPrice: 0,
-    baseCooldown: 6000,
+    baseCooldown: 7000,
     baseStats: { blinkDistance: 120, cooldownReduction: 0 },
     tiers: null,
   },
@@ -259,7 +259,7 @@ export const BLINK_DEFS = {
     desc: 'Dash in a line, knocking back anyone in the path.',
     color: 0xff8844,
     shopPrice: 150,
-    baseCooldown: 6750,
+    baseCooldown: 8000,
     baseStats: {
       dashDistance: 180, knockback: 500, hitRadius: 25, cooldownReduction: 0,
     },
@@ -279,7 +279,7 @@ export const BLINK_DEFS = {
     desc: 'Longer range, shorter cooldown blink.',
     color: 0x88ccff,
     shopPrice: 150,
-    baseCooldown: 4500,
+    baseCooldown: 6000,
     baseStats: { blinkDistance: 200, cooldownReduction: 0 },
     tiers: {
       1: { title: 'Far Step', desc: 'Distance +40, CD -400ms', price: 75,
@@ -297,7 +297,7 @@ export const BLINK_DEFS = {
     desc: 'Fire a projectile that swaps your position with the target.',
     color: 0xcc44ff,
     shopPrice: 150,
-    baseCooldown: 7000,
+    baseCooldown: 8500,
     baseStats: {
       projectileSpeed: 380, projectileRadius: 7, projectileLifetime: 2500, cooldownReduction: 0,
     },
@@ -344,5 +344,5 @@ export function createBaseBlinkStats(blinkId) {
 
 /** Create a fresh global upgrades object */
 export function createBaseGlobalUpgrades() {
-  return { bonusHp: 0 };
+  return { bonusHp: 0, bonusSpeed: 0 };
 }

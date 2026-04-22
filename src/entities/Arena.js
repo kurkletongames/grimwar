@@ -192,12 +192,16 @@ export class Arena {
     return {
       currentRadius: this.currentRadius,
       shrinking: this.shrinking,
+      themeName: this.themeName,
     };
   }
 
   applyState(state) {
     this.currentRadius = state.currentRadius;
     this.shrinking = state.shrinking;
+    if (state.themeName && state.themeName !== this.themeName) {
+      this.setTheme(state.themeName);
+    }
     this.draw();
   }
 

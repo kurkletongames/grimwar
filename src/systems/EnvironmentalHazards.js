@@ -59,7 +59,7 @@ export class HazardManager {
       }
       case 'wind_gust': {
         const angle = Math.random() * Math.PI * 2;
-        this.hazards.push(new WindGust(angle));
+        this.hazards.push(new WindGust(angle, this.scene));
         break;
       }
       case 'meteor_shower': {
@@ -97,7 +97,7 @@ export class HazardManager {
       switch (h.type) {
         case 'fire_geyser': { const g = new FireGeyser(h.x, h.y); g.startTime = h.startTime; g.phase = h.phase; return g; }
         case 'ice_patch': { const g = new IcePatch(h.x, h.y); g.startTime = h.startTime; return g; }
-        case 'wind_gust': { const g = new WindGust(h.angle); g.startTime = h.startTime; return g; }
+        case 'wind_gust': { const g = new WindGust(h.angle, this.scene); g.startTime = h.startTime; return g; }
         case 'meteor_impact': { const g = new MeteorImpact(h.x, h.y); g.startTime = h.startTime; g.phase = h.phase; return g; }
         default: return null;
       }
@@ -210,10 +210,11 @@ class IcePatch {
 
 // ---- Wind Gust ----
 class WindGust {
-  constructor(angle) {
+  constructor(angle, scene) {
     this.type = 'wind_gust';
     this.x = 0; this.y = 0;
     this.angle = angle;
+    this.scene = scene;
     this.alive = true;
     this.startTime = Date.now();
     this.phase = 'active';
@@ -240,7 +241,9 @@ class WindGust {
     // Minimal visual — just a directional indicator
     const elapsed = Date.now() - this.startTime;
     const alpha = Math.max(0, 1 - elapsed / this.duration) * 0.4;
-    const cx = 640; const cy = 480; // approximate screen center
+    const cam = this.scene.cameras.main;
+    const cx = cam.scrollX + cam.width / 2;
+    const cy = cam.scrollY + cam.height / 2;
     for (let i = 0; i < 5; i++) {
       const offset = (elapsed * 0.3 + i * 80) % 400 - 200;
       const perpX = -Math.sin(this.angle);

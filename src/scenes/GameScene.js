@@ -1,4 +1,4 @@
-import Phaser from 'phaser';
+import * as Phaser from 'phaser';
 import { network } from '../network/NetworkManager.js';
 import { LobbyManager } from '../network/LobbyManager.js';
 import { Arena, THEME_NAMES } from '../entities/Arena.js';
@@ -30,6 +30,7 @@ const ROUND_END_DELAY = 2000; // ms before showing power-up screen
 const DEFAULT_WINS_TO_WIN = 5;
 const BLINK_DISTANCE = 120;
 const BLINK_COOLDOWN = 12000; // ms
+const SPELL_GCD = 250; // ms — global cooldown between any two spell casts (blink exempt)
 
 // Rarity: common (60%), rare (25%), epic (12%), legendary (3%)
 const RARITY = {
@@ -183,6 +184,7 @@ export class GameScene extends Phaser.Scene {
     this.testMode = false;
     this.countdownActive = false;
     this._pendingTimers = [];
+    this._nativeTimers = [];
     this.botIds = [];
     this.botLastFireball = {};
 
@@ -199,6 +201,7 @@ export class GameScene extends Phaser.Scene {
     // Per-player cooldown timestamps (for visual indicators on all wizards)
     this.playerFireballTimes = new Map(); // playerId -> last cast time
     this.playerBlinkTimes = new Map(); // playerId -> last cast time
+    this.playerLastAnySpellCast = new Map(); // playerId -> last spell cast time (any spell), for GCD
     this._blinkFxList = []; // track VFX graphics for cleanup
     this.winsToWin = DEFAULT_WINS_TO_WIN;
 
@@ -306,6 +309,11 @@ export class GameScene extends Phaser.Scene {
       this.events.emit('modifier-result', data);
     };
 
+    // Kill feed from host
+    network.onPlayerKill = (data) => {
+      this.events.emit('player-kill', data);
+    };
+
     // Laser VFX from other players
     network.onLaser = (data) => {
       if (data && this._isFiniteNum(data.x) && this._isFiniteNum(data.y)) {
@@ -340,9 +348,14 @@ export class GameScene extends Phaser.Scene {
       this._broadcastGameState();
     };
 
+    // Vulnerable-mark VFX + SFX (juice on amplified hits, chime on fresh mark)
+    this.events.on('vulnerable-hit', (data) => this._onVulnerableHit(data));
+    this.events.on('vulnerable-applied', (data) => this._onVulnerableApplied(data));
+
     // Cleanup on scene shutdown
     this.events.on('shutdown', () => {
       this._cancelPendingTimers();
+      if (this._modifierVoteTimeout) { clearTimeout(this._modifierVoteTimeout); this._modifierVoteTimeout = null; }
       network.onGameState = null;
       network.onPlayerInput = null;
       network.onShowUpgrades = null;
@@ -351,6 +364,7 @@ export class GameScene extends Phaser.Scene {
       network.onUpgradeApplied = null;
       network.onShowModifierVote = null;
       network.onModifierResult = null;
+      network.onPlayerKill = null;
       network.onLaser = null;
       network.onShowShop = null;
       network.onShopClosed = null;
@@ -371,6 +385,9 @@ export class GameScene extends Phaser.Scene {
       // Init any missing player data structures (won't overwrite existing)
       data.players.forEach((p) => {
         if (!this.scores.has(p.peerId)) this.scores.set(p.peerId, 0);
+        if (!this.killStats.has(p.peerId)) {
+          this.killStats.set(p.peerId, { kills: 0, deaths: 0, streak: 0 });
+        }
         if (!this.playerUpgradeHistory.has(p.peerId)) this.playerUpgradeHistory.set(p.peerId, []);
         if (!this.playerUpgrades.has(p.peerId)) {
           this.playerUpgrades.set(p.peerId, {
@@ -586,9 +603,9 @@ export class GameScene extends Phaser.Scene {
       network.broadcastToClients({ type: 'shop-ready-update', ready: readyHumans, total: humanCount });
     }
 
-    // Check if all human players are ready
+    // Check if all human players are ready (exclude disconnected)
     const allReady = this.playerInfo.every((p) =>
-      p.peerId.startsWith('bot-') || this._shopReadyPlayers.has(p.peerId)
+      p.peerId.startsWith('bot-') || this._shopReadyPlayers.has(p.peerId) || network.disconnectedPlayers.has(p.name)
     );
     if (allReady) {
       this._closeShop();
@@ -604,6 +621,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _closeShop() {
+    if (!this.shopOpen) return;
     this.shopOpen = false;
     if (this._shopTimer) {
       this._shopTimer.remove(false);
@@ -816,6 +834,7 @@ export class GameScene extends Phaser.Scene {
     this._modifierVoteTimeout = setTimeout(() => {
       this._resolveModifierVote();
     }, 10000);
+    this._nativeTimers.push(this._modifierVoteTimeout);
   }
 
   _handleModifierVote(peerId, modifierId) {
@@ -829,9 +848,9 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // In multiplayer, check if all humans voted
+    // In multiplayer, check if all humans voted (exclude disconnected)
     const allVoted = this.playerInfo.every((p) =>
-      p.peerId.startsWith('bot-') || this._modifierVotes[p.peerId]
+      p.peerId.startsWith('bot-') || this._modifierVotes[p.peerId] || network.disconnectedPlayers.has(p.name)
     );
     if (allVoted) this._resolveModifierVote();
   }
@@ -867,12 +886,13 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Brief pause to show result, then start round
-    setTimeout(() => {
+    const voteTid = setTimeout(() => {
       this._startRound();
       if (!this.testMode) {
         network.broadcastToClients({ type: 'game-start-round' });
       }
     }, 1500);
+    this._nativeTimers.push(voteTid);
   }
 
   _cancelPendingTimers() {
@@ -880,6 +900,8 @@ export class GameScene extends Phaser.Scene {
       this._pendingTimers.forEach((t) => t.remove(false));
     }
     this._pendingTimers = [];
+    this._nativeTimers.forEach(tid => clearTimeout(tid));
+    this._nativeTimers = [];
   }
 
   _startRound() {
@@ -897,6 +919,7 @@ export class GameScene extends Phaser.Scene {
     this.playerFireballTimes.clear();
     this.playerBlinkTimes.clear();
     this.spellCastTimes.clear();
+    this.playerLastAnySpellCast.clear();
     this.shopOpen = false;
     this.botIds.forEach((botId) => { this.botLastFireball[botId] = 0; });
 
@@ -1090,6 +1113,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _switchSpell(slotIndex) {
+    if (!this.gameStarted || this.roundOver || this.countdownActive || this.shopOpen) return;
     if (this.gameMode !== 'arena') return;
     const category = SLOT_KEYS[slotIndex];
     if (!category) return;
@@ -1232,6 +1256,8 @@ export class GameScene extends Phaser.Scene {
   _handleLeftClick(pointer) {
     if (!this.gameStarted || this.roundOver || this.countdownActive) return;
     if (this.shopOpen) return;
+    const uiScene = this.scene.get('UIScene');
+    if (uiScene && uiScene.escMenuVisible) return;
 
     const now = Date.now();
     const spellId = this.gameMode === 'arena'
@@ -1241,6 +1267,10 @@ export class GameScene extends Phaser.Scene {
     const castKey = this._getSpellCastTimeKey(this.localPlayerId, spellId);
     const lastCast = this.spellCastTimes.get(castKey) || 0;
     if (now - lastCast < cd) return;
+
+    // Global cooldown — prevents sub-second spell rolls across different slots
+    const lastAny = this.playerLastAnySpellCast.get(this.localPlayerId) || 0;
+    if (now - lastAny < SPELL_GCD) return;
 
     const wizard = this.wizards.get(this.localPlayerId);
     if (!wizard || !wizard.alive) return;
@@ -1261,6 +1291,7 @@ export class GameScene extends Phaser.Scene {
 
     // Update all cooldown trackers
     this.spellCastTimes.set(castKey, now);
+    this.playerLastAnySpellCast.set(this.localPlayerId, now);
     this.lastFireballTime = now;
     this.events.emit('fireball-cast', now);
   }
@@ -1268,6 +1299,7 @@ export class GameScene extends Phaser.Scene {
   _spawnFireball(playerId, x, y, dirX, dirY) {
     const stats = this.playerUpgrades.get(playerId) || {};
     const count = stats.multishot || 1;
+    const startIdx = this.fireballs.length;
 
     if (count <= 1) {
       const fireball = new Fireball(this, x, y, dirX, dirY, playerId, stats);
@@ -1287,14 +1319,14 @@ export class GameScene extends Phaser.Scene {
     }
     this.playerFireballTimes.set(playerId, Date.now());
 
-    // Big Head Mode: double projectile radius
+    // Big Head Mode: double projectile radius (only newly spawned fireballs)
     if (this.activeModifier && this.activeModifier.projectileRadiusMult) {
       const mult = this.activeModifier.projectileRadiusMult;
-      this.fireballs.forEach((fb) => {
-        if (fb.ownerPlayerId === playerId && fb.radius) {
-          fb.radius *= mult;
+      for (let i = startIdx; i < this.fireballs.length; i++) {
+        if (this.fireballs[i].ownerPlayerId === playerId && this.fireballs[i].radius) {
+          this.fireballs[i].radius *= mult;
         }
-      });
+      }
     }
 
     // Self-knockback (Glass Cannon)
@@ -1317,6 +1349,8 @@ export class GameScene extends Phaser.Scene {
 
   _handleBlink() {
     if (!this.gameStarted || this.roundOver || this.countdownActive) return;
+    const uiScene = this.scene.get('UIScene');
+    if (uiScene && uiScene.escMenuVisible) return;
 
     const now = Date.now();
     const blinkCd = this._getBlinkCooldown(this.localPlayerId);
@@ -1596,7 +1630,11 @@ export class GameScene extends Phaser.Scene {
         const fbCd = this._getFireballCooldown(peerId);
         const lastFb = this.playerFireballTimes.get(peerId) || 0;
         if (now - lastFb < fbCd) return;
+        // Global cooldown
+        const lastAnyFb = this.playerLastAnySpellCast.get(peerId) || 0;
+        if (now - lastAnyFb < SPELL_GCD) return;
         this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
+        this.playerLastAnySpellCast.set(peerId, now);
         break;
       }
       case 'cast': {
@@ -1614,12 +1652,19 @@ export class GameScene extends Phaser.Scene {
           const castKey = this._getSpellCastTimeKey(peerId, spellId);
           const lastCast = this.spellCastTimes.get(castKey) || 0;
           if (now - lastCast < castCd) return;
+          // Global cooldown
+          const lastAnyCast = this.playerLastAnySpellCast.get(peerId) || 0;
+          if (now - lastAnyCast < SPELL_GCD) return;
           this._spawnProjectile(peerId, spellId, wizard.x, wizard.y, data.dirX, data.dirY);
+          this.playerLastAnySpellCast.set(peerId, now);
         } else {
           const cd = this._getFireballCooldown(peerId);
           const last = this.playerFireballTimes.get(peerId) || 0;
           if (now - last < cd) return;
+          const lastAnyCast = this.playerLastAnySpellCast.get(peerId) || 0;
+          if (now - lastAnyCast < SPELL_GCD) return;
           this._spawnFireball(peerId, wizard.x, wizard.y, data.dirX, data.dirY);
+          this.playerLastAnySpellCast.set(peerId, now);
         }
         break;
       }
@@ -1686,12 +1731,13 @@ export class GameScene extends Phaser.Scene {
         }
 
         // Reset sparkle after laser
-        setTimeout(() => {
+        const sparkleTid = setTimeout(() => {
           this._sparkleLaserFired = false;
           const wiz = this.wizards.get(this.localPlayerId);
           if (wiz) wiz.sparkle = false;
           this._sparkleChargeStart = 0;
         }, 1500);
+        this._nativeTimers.push(sparkleTid);
       }
     }
     if (localWiz && !localWiz.sparkle) {
@@ -1839,18 +1885,22 @@ export class GameScene extends Phaser.Scene {
         bot.setInput(mx / mLen, my / mLen);
       }
 
+      const lastAnyBot = this.playerLastAnySpellCast.get(botId) || 0;
+      const gcdReady = now - lastAnyBot >= SPELL_GCD;
       if (this.gameMode === 'arena') {
         const spellId = this._getActiveSpellId(botId);
         const cd = this._getSpellCooldown(botId, spellId);
         const castKey = this._getSpellCastTimeKey(botId, spellId);
         const lastCast = this.spellCastTimes.get(castKey) || 0;
-        if (now - lastCast > cd + 200 + Math.random() * 800) {
+        if (gcdReady && now - lastCast > cd + 200 + Math.random() * 800) {
           this._spawnProjectile(botId, spellId, bot.x, bot.y, dx, dy);
+          this.playerLastAnySpellCast.set(botId, now);
         }
       } else {
-        if (now - (this.botLastFireball[botId] || 0) > FIREBALL_COOLDOWN + 200 + Math.random() * 800) {
+        if (gcdReady && now - (this.botLastFireball[botId] || 0) > FIREBALL_COOLDOWN + 200 + Math.random() * 800) {
           this._spawnFireball(botId, bot.x, bot.y, dx, dy);
           this.botLastFireball[botId] = now;
+          this.playerLastAnySpellCast.set(botId, now);
         }
       }
     }
@@ -1923,11 +1973,13 @@ export class GameScene extends Phaser.Scene {
       const particle = this.add.graphics();
       const size = 3 + Math.random() * 3;
       particle.fillStyle(victim.color, 0.9);
-      particle.fillCircle(victim.x, victim.y, size);
+      particle.fillCircle(0, 0, size);
+      particle.x = victim.x;
+      particle.y = victim.y;
       this.tweens.add({
         targets: particle,
-        x: Math.cos(angle) * dist,
-        y: Math.sin(angle) * dist,
+        x: victim.x + Math.cos(angle) * dist,
+        y: victim.y + Math.sin(angle) * dist,
         alpha: 0,
         scaleX: 0.3,
         scaleY: 0.3,
@@ -1940,6 +1992,17 @@ export class GameScene extends Phaser.Scene {
     const killerName = this.playerInfo.find((p) => p.peerId === killerId)?.name || 'Unknown';
     const victimName = victim.playerName;
     this.events.emit('player-kill', { killerName, victimName, killerId, victimId: victim.playerId });
+
+    // Broadcast kill event to clients
+    if (network.isHost && !this.testMode) {
+      network.broadcastToClients({
+        type: 'player-kill',
+        killerName,
+        victimName,
+        spellName: 'lava',
+        isBountyKill: this.bountyTarget === victim.playerId,
+      });
+    }
   }
 
   _checkWizardCollisions() {
@@ -2187,11 +2250,23 @@ export class GameScene extends Phaser.Scene {
         } else if (dealt === -4 && fb.spellId === 'swap_projectile') {
           const caster = this.wizards.get(fb.ownerPlayerId);
           const target = this.wizards.get(fb.targetPlayerId);
-          if (caster && target) {
+          if (caster && target && caster.alive && target.alive) {
             const tmpX = caster.x, tmpY = caster.y;
             caster.x = target.x; caster.y = target.y;
             target.x = tmpX; target.y = tmpY;
             caster.draw(); target.draw();
+
+            // Release tethers on swapped wizards
+            if (caster.tethered) caster.tethered = false;
+            if (target.tethered) target.tethered = false;
+            // Kill any active tethers connected to these wizards
+            this.fireballs.forEach(tfb => {
+              if (tfb.spellId === 'tether' && tfb.phase === 'tethered') {
+                if (tfb.targetPlayerId === caster.playerId || tfb.targetPlayerId === target.playerId) {
+                  tfb.alive = false;
+                }
+              }
+            });
           }
         } else if (dealt > 0) {
           // Track last hit for lava kill credit
@@ -2283,9 +2358,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Destroy projectiles that hit the wall (skip stationary AoE spells)
-    const skipWallCheck = new Set(['lightning_bolt', 'vortex_wall']);
+    const skipWallCheck = new Set(['lightning_bolt', 'vortex_wall', 'mirror_image']);
     this.fireballs.forEach((fb) => {
-      if (fb.alive && !skipWallCheck.has(fb.spellId) && this.arena.isOutsideWall(fb.x, fb.y)) {
+      // Tethers skip wall check only during tethered phase (beam between caster/target)
+      const isTethered = fb.spellId === 'tether' && fb.phase === 'tethered';
+      if (fb.alive && !isTethered && !skipWallCheck.has(fb.spellId) && this.arena.isOutsideWall(fb.x, fb.y)) {
         fb.alive = false;
       }
     });
@@ -2479,14 +2556,16 @@ export class GameScene extends Phaser.Scene {
     // In roguelike mode, go to modifier vote before starting round
     // Use setTimeout since roundOver=true freezes Phaser timers
     if (this.gameMode === 'roguelike' && this.roundNumber > 0) {
-      setTimeout(() => this._startModifierVote(), 500);
+      const tid = setTimeout(() => this._startModifierVote(), 500);
+      this._nativeTimers.push(tid);
     } else {
-      setTimeout(() => {
+      const tid = setTimeout(() => {
         this._startRound();
         if (!this.testMode) {
           network.broadcastToClients({ type: 'game-start-round' });
         }
       }, 500);
+      this._nativeTimers.push(tid);
     }
   }
 
@@ -2496,6 +2575,9 @@ export class GameScene extends Phaser.Scene {
     for (const peerId of this._upgradesPending) {
       const pick = allIds[Math.floor(Math.random() * allIds.length)];
       this.applyUpgrade(peerId, pick);
+      if (!this.testMode) {
+        network.broadcastToClients({ type: 'upgrade-applied', peerId, upgradeId: pick });
+      }
     }
     this._upgradesPending.clear();
     this._checkAllUpgradesPicked();
@@ -2526,8 +2608,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   extendGame() {
+    if (!network.isHost) return;
     this.winsToWin += 2;
     this.events.emit('game-extended', { winsToWin: this.winsToWin });
+    // Broadcast to clients via game-state (winsToWin is included in _broadcastGameState).
+    // NOTE: NetworkManager.js needs a 'game-extended' handler added for direct messaging.
+    // For now, clients will pick up winsToWin from the next game-state broadcast.
+    if (!this.testMode) {
+      this._broadcastGameState();
+    }
     if (this.gameMode === 'arena') {
       this._startShopPhase(this._roundWinnerId);
     } else {
@@ -2541,6 +2630,82 @@ export class GameScene extends Phaser.Scene {
 
   getPlayerInfo() {
     return this.playerInfo;
+  }
+
+  /**
+   * Amplified-hit juice: bigger spark, red damage number, camera shake for the local attacker.
+   */
+  _onVulnerableHit({ x, y, dealt, ownerId }) {
+    // Expanding red shockwave ring
+    const ring = this.add.graphics();
+    ring.lineStyle(3, 0xff3322, 0.9);
+    ring.strokeCircle(x, y, 8);
+    this._blinkFxList.push(ring);
+    this.tweens.add({
+      targets: ring, scaleX: 4, scaleY: 4, alpha: 0, duration: 280,
+      onComplete: () => { ring.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== ring); },
+    });
+
+    // Sharp spark flash
+    const spark = this.add.graphics();
+    spark.fillStyle(0xff6644, 0.9);
+    spark.fillCircle(x, y, 14);
+    spark.fillStyle(0xffddaa, 1);
+    spark.fillCircle(x, y, 6);
+    this._blinkFxList.push(spark);
+    this.tweens.add({
+      targets: spark, scaleX: 2, scaleY: 2, alpha: 0, duration: 220,
+      onComplete: () => { spark.destroy(); this._blinkFxList = this._blinkFxList.filter((g) => g !== spark); },
+    });
+
+    // Red floating damage number
+    if (dealt >= 1) {
+      const txt = this.add.text(x, y - 20, `-${Math.round(dealt)}`, {
+        fontSize: '18px', color: '#ff4422', fontStyle: 'bold',
+        stroke: '#220000', strokeThickness: 3,
+      }).setOrigin(0.5);
+      this.tweens.add({
+        targets: txt, y: y - 48, alpha: 0, duration: 700,
+        onComplete: () => { txt.destroy(); },
+      });
+    }
+
+    // Camera shake if local player landed the amplified hit
+    if (ownerId && ownerId === this.localPlayerId) {
+      this.cameras.main.shake(120, 0.004);
+    }
+  }
+
+  /**
+   * Mark-applied SFX: subtle synth chime via WebAudio. Pitch differs based on
+   * whether the local player marked an enemy (high) or got marked (low warning).
+   */
+  _onVulnerableApplied({ playerId }) {
+    try {
+      if (!this._audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        this._audioCtx = new AC();
+      }
+      const ctx = this._audioCtx;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const isLocalBeingMarked = playerId === this.localPlayerId;
+      const baseFreq = isLocalBeingMarked ? 240 : 760; // warning vs confirmation
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(baseFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.75, now + 0.18);
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(isLocalBeingMarked ? 0.08 : 0.05, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.24);
+    } catch (_) { /* audio disabled — ignore */ }
   }
 
   _createProjectileFromState(fbs) {
@@ -2651,6 +2816,8 @@ export class GameScene extends Phaser.Scene {
       killStats: killStatsObj,
       bountyTarget: this.bountyTarget,
       hazards: this.hazardManager ? this.hazardManager.serialize() : [],
+      winsToWin: this.winsToWin,
+      activeModifier: this.activeModifier ? { id: this.activeModifier.id, ...this.activeModifier } : null,
     };
     network.broadcastToClients(state);
   }
@@ -2672,6 +2839,10 @@ export class GameScene extends Phaser.Scene {
       }
     }
     if (data.bountyTarget !== undefined) this.bountyTarget = data.bountyTarget;
+    if (data.winsToWin !== undefined) this.winsToWin = data.winsToWin;
+    if (data.activeModifier !== undefined) {
+      this.activeModifier = data.activeModifier;
+    }
     if (data.hazards && this.hazardManager) {
       this.hazardManager.applyState(data.hazards);
     }
@@ -2721,19 +2892,33 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    if (data.scores) {
-      Object.entries(data.scores).forEach(([id, wins]) => this.scores.set(id, wins));
-    }
-
     const aliveWizards = Array.from(this.wizards.values()).filter((w) => w.alive);
     if (aliveWizards.length <= 1 && this.wizards.size > 1 && !this.roundOver) {
       this.roundOver = true;
-      const winner = aliveWizards[0];
+      const winnerId = aliveWizards[0]?.playerId || null;
+      const winnerName = aliveWizards[0]?.playerName || 'No one';
+
+      // Scores are already synced from host via game-state broadcast — don't increment locally
+
+      const winnerScore = winnerId ? (this.scores.get(winnerId) || 0) : 0;
+      const isGameOver = winnerScore >= this.winsToWin;
       this.events.emit('round-over', {
-        winnerName: winner ? winner.playerName : 'No one',
+        winnerName,
         scores: Object.fromEntries(this.scores),
         winsToWin: this.winsToWin,
+        isGameOver,
       });
+
+      // Check game-over
+      if (winnerScore >= this.winsToWin) {
+        const winnerInfo = this.playerInfo.find(p => p.peerId === winnerId);
+        this.events.emit('game-over', {
+          winnerId,
+          winnerName: winnerInfo?.name || winnerName,
+          scores: Object.fromEntries(this.scores),
+          winsToWin: this.winsToWin,
+        });
+      }
     }
   }
 }

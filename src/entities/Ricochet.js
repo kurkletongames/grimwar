@@ -88,6 +88,7 @@ export class Ricochet {
       const isCaster = wizard.playerId === this.ownerPlayerId;
       const dirLen = Math.sqrt(this.velX ** 2 + this.velY ** 2) || 1;
 
+      let dealt = 0;
       if (isCaster) {
         // Bounce off caster: small knockback, no damage
         wizard.applyKnockback(
@@ -95,12 +96,20 @@ export class Ricochet {
           (this.velY / dirLen) * this.knockback * 0.3,
         );
       } else {
-        // Hit enemy: full damage + knockback
-        wizard.takeDamage(this.damage);
+        // Hit enemy: full damage + knockback (amplified vs vulnerable)
+        const wasVuln = wizard.isVulnerable();
+        const dmgMult = wizard.getDamageMult();
+        const kbMult = wizard.getKnockbackMult();
+        const prevHealth = wizard.health;
+        wizard.takeDamage(this.damage * dmgMult);
+        dealt = prevHealth - wizard.health;
         wizard.applyKnockback(
-          (this.velX / dirLen) * this.knockback,
-          (this.velY / dirLen) * this.knockback,
+          (this.velX / dirLen) * this.knockback * kbMult,
+          (this.velY / dirLen) * this.knockback * kbMult,
         );
+        if (wasVuln && dealt > 0) {
+          this.scene.events.emit('vulnerable-hit', { x: wizard.x, y: wizard.y, dealt, ownerId: this.ownerPlayerId });
+        }
       }
 
       this.lastHitId = wizard.playerId;
@@ -111,7 +120,7 @@ export class Ricochet {
       } else {
         this.alive = false;
       }
-      return isCaster ? 0 : (wizard.alive ? this.damage : this.damage);
+      return isCaster ? 0 : dealt;
     }
     return 0;
   }

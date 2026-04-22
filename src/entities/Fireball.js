@@ -96,14 +96,21 @@ export class Fireball {
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     if (dist < this.radius * 2 + wizard.radius) {
+      const wasVuln = wizard.isVulnerable();
+      const dmgMult = wizard.getDamageMult();
+      const kbMult = wizard.getKnockbackMult();
       const prevHealth = wizard.health;
-      wizard.takeDamage(this.damage);
+      wizard.takeDamage(this.damage * dmgMult);
       const dealt = prevHealth - wizard.health;
 
       const dirLen = Math.sqrt(this.velX ** 2 + this.velY ** 2) || 1;
-      const knockX = (this.velX / dirLen) * this.knockback;
-      const knockY = (this.velY / dirLen) * this.knockback;
+      const knockX = (this.velX / dirLen) * this.knockback * kbMult;
+      const knockY = (this.velY / dirLen) * this.knockback * kbMult;
       wizard.applyKnockback(knockX, knockY);
+
+      if (wasVuln && dealt > 0) {
+        this.scene.events.emit('vulnerable-hit', { x: wizard.x, y: wizard.y, dealt, ownerId: this.ownerPlayerId });
+      }
 
       if (this.piercing) {
         this.hitTargets.add(wizard.playerId);

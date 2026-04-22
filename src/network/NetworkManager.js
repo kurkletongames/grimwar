@@ -39,6 +39,8 @@ export class NetworkManager {
     this.onUpgradeApplied = null;
     this.onShowModifierVote = null;
     this.onModifierResult = null;
+    this.onLaser = null;
+    this.onPlayerKill = null;
   }
 
   _generateCode() {
@@ -89,6 +91,10 @@ export class NetworkManager {
    */
   joinGame(gameCode, playerName) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const safeResolve = () => { if (!settled) { settled = true; resolve(); } };
+      const safeReject = (err) => { if (!settled) { settled = true; reject(err); } };
+
       this.isHost = false;
       this.playerName = playerName;
       this.gameCode = gameCode.toUpperCase();
@@ -112,21 +118,21 @@ export class NetworkManager {
           });
 
           this._setupClientListeners(conn);
-          resolve();
+          safeResolve();
         });
 
-        conn.on('error', (err) => reject(err));
+        conn.on('error', (err) => safeReject(err));
 
         // Timeout if connection doesn't open
         setTimeout(() => {
           if (!this.hostConnection) {
-            reject(new Error('Connection timed out. Check the game code.'));
+            safeReject(new Error('Connection timed out. Check the game code.'));
           }
         }, 10000);
       });
 
       this.peer.on('error', (err) => {
-        reject(new Error('Could not connect. Check the game code.'));
+        safeReject(new Error('Could not connect. Check the game code.'));
       });
     });
   }
@@ -141,11 +147,11 @@ export class NetworkManager {
       });
 
       conn.on('close', () => {
-        this._handleDisconnect(conn.peer);
+        this._handleDisconnect(conn);
       });
 
       conn.on('error', () => {
-        this._handleDisconnect(conn.peer);
+        this._handleDisconnect(conn);
       });
     });
   }
@@ -241,10 +247,15 @@ export class NetworkManager {
         if (this.onPlayerInput) this.onPlayerInput(peerId, data);
         break;
       }
+      default:
+        console.warn('Unknown message type from client:', data.type);
+        break;
     }
   }
 
-  _handleDisconnect(peerId) {
+  _handleDisconnect(conn) {
+    // Use original peerId if this was a reconnected player
+    const peerId = conn._originalPeerId || conn.peer;
     this.connections.delete(peerId);
     const player = this.players.get(peerId);
 
@@ -317,6 +328,9 @@ export class NetworkManager {
         case 'laser':
           if (this.onLaser) this.onLaser(data);
           break;
+        case 'player-kill':
+          if (this.onPlayerKill) this.onPlayerKill(data);
+          break;
         case 'show-shop':
           if (this.onShowShop) this.onShowShop(data);
           break;
@@ -383,6 +397,33 @@ export class NetworkManager {
 
   destroy() {
     if (this.peer) this.peer.destroy();
+    this.connections.clear();
+    this.players.clear();
+    this.disconnectedPlayers.clear();
+    this.gameStarted = false;
+    this.hostConnection = null;
+    this.gameCode = '';
+    this.localPlayerId = '';
+    // Null out all callbacks
+    this.onPlayerJoined = null;
+    this.onPlayerLeft = null;
+    this.onPlayerReconnected = null;
+    this.onGameStart = null;
+    this.onGameState = null;
+    this.onPlayerInput = null;
+    this.onPlayerListUpdate = null;
+    this.onShowShop = null;
+    this.onShopClosed = null;
+    this.onShopUpdate = null;
+    this.onShopReadyUpdate = null;
+    this.onShowUpgrades = null;
+    this.onUpgradeStatus = null;
+    this.onStartRound = null;
+    this.onUpgradeApplied = null;
+    this.onShowModifierVote = null;
+    this.onModifierResult = null;
+    this.onLaser = null;
+    this.onPlayerKill = null;
   }
 }
 

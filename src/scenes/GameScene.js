@@ -224,6 +224,13 @@ export class GameScene extends Phaser.Scene {
     this.killStats = new Map(); // playerId -> { kills, deaths, streak }
     this.bountyTarget = null; // playerId of player with highest streak
 
+    // Ultimate charge system (arena mode)
+    this.ultCharges = new Map(); // playerId -> current charge (0-100)
+    this.ultUsedThisRound = new Map(); // playerId -> boolean
+
+    // Round-win bounty system (arena mode)
+    this.roundWinStreaks = new Map(); // playerId -> consecutive round wins
+
     // Input — disable capture so HTML inputs (lobby name) still work
     this.keys = this.input.keyboard.addKeys({
       W: Phaser.Input.Keyboard.KeyCodes.W,
@@ -248,6 +255,7 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-TWO', () => this._switchSpell(1));
     this.input.keyboard.on('keydown-THREE', () => this._switchSpell(2));
     this.input.keyboard.on('keydown-FOUR', () => this._switchSpell(3));
+    this.input.keyboard.on('keydown-FIVE', () => this._switchSpell(4));
 
     // Secret sparkle (Shift+Q) — charges a giant cosmetic laser
     this._sparkleChargeStart = 0;
@@ -321,6 +329,22 @@ export class GameScene extends Phaser.Scene {
       }
     };
 
+    // Ultimate VFX from host
+    network.onUltimateVfx = (data) => {
+      if (data && data.ultId) {
+        const vfxType = data.ultId === 'supernova' ? 'supernova'
+          : data.ultId === 'meteor_storm' ? 'meteor_strike'
+          : data.ultId === 'arcane_barrage' ? 'barrage'
+          : data.ultId === 'black_hole' ? 'black_hole' : null;
+        if (vfxType) {
+          const vfxX = vfxType === 'barrage' || vfxType === 'supernova' ? data.x : data.targetX;
+          const vfxY = vfxType === 'barrage' || vfxType === 'supernova' ? data.y : data.targetY;
+          this._drawUltVfx(vfxX, vfxY, vfxType, data.color || 0xffdd00);
+          this.cameras.main.shake(400, 0.012);
+        }
+      }
+    };
+
     // Shop messages (arena mode, client side)
     network.onShowShop = (data) => {
       this.shopOpen = true;
@@ -366,6 +390,7 @@ export class GameScene extends Phaser.Scene {
       network.onModifierResult = null;
       network.onPlayerKill = null;
       network.onLaser = null;
+      network.onUltimateVfx = null;
       network.onShowShop = null;
       network.onShopClosed = null;
       network.onShopUpdate = null;
@@ -421,6 +446,7 @@ export class GameScene extends Phaser.Scene {
               blinkTier: 0,
               globalUpgrades: createBaseGlobalUpgrades(),
               purchasedUpgrades: [],
+              ultimateId: null,
             });
           }
         });
@@ -501,6 +527,7 @@ export class GameScene extends Phaser.Scene {
         blinkTier: 0,
         globalUpgrades: createBaseGlobalUpgrades(),
         purchasedUpgrades: [],
+        ultimateId: null,
       });
 
       if (p.peerId.startsWith('bot-')) {
@@ -759,6 +786,26 @@ export class GameScene extends Phaser.Scene {
     network.sendInput({ type: 'input', action: 'shop-buy-global', upgradeId });
   }
 
+  submitShopBuyUltimate(ultId) {
+    this._handleShopBuyUltimate(this.localPlayerId, ultId);
+    this._broadcastShopState();
+  }
+
+  sendShopBuyUltimate(ultId) {
+    network.sendInput({ type: 'input', action: 'shop-buy-ultimate', ultId });
+  }
+
+  _handleShopBuyUltimate(peerId, ultId) {
+    const sd = this.playerSpellData.get(peerId);
+    if (!sd || sd.ultimateId) return; // Already has an ultimate
+    const def = SPELL_DEFS[ultId];
+    if (!def || def.category !== 'ultimate') return;
+    const gold = this.goldManager.getGold(peerId);
+    if (gold < def.shopPrice) return;
+    sd.ultimateId = ultId;
+    this.goldManager.gold.set(peerId, gold - def.shopPrice);
+  }
+
   _broadcastShopState() {
     if (this._suppressShopBroadcast) return;
     const state = {
@@ -785,6 +832,7 @@ export class GameScene extends Phaser.Scene {
         blinkTier: data.blinkTier,
         globalUpgrades: { ...data.globalUpgrades },
         purchasedUpgrades: [...data.purchasedUpgrades],
+        ultimateId: data.ultimateId || null,
       };
     });
     return result;
@@ -802,6 +850,7 @@ export class GameScene extends Phaser.Scene {
         blinkTier: d.blinkTier || 0,
         globalUpgrades: { ...d.globalUpgrades },
         purchasedUpgrades: [...(d.purchasedUpgrades || [])],
+        ultimateId: d.ultimateId || null,
       });
     }
   }
@@ -993,8 +1042,19 @@ export class GameScene extends Phaser.Scene {
           wizard.knockbackResist = upgrades.knockbackResist;
         }
       }
+      // Set bounty level from round win streaks
+      wizard.bountyLevel = this.roundWinStreaks.get(player.peerId) || 0;
+
       this.wizards.set(player.peerId, wizard);
     });
+
+    // Initialize ultimate charges for arena mode
+    if (this.gameMode === 'arena') {
+      this.playerInfo.forEach(p => {
+        this.ultCharges.set(p.peerId, 0);
+        this.ultUsedThisRound.set(p.peerId, false);
+      });
+    }
 
     // Apply active round modifier
     const mod = this.activeModifier;
@@ -1115,6 +1175,20 @@ export class GameScene extends Phaser.Scene {
   _switchSpell(slotIndex) {
     if (!this.gameStarted || this.roundOver || this.countdownActive || this.shopOpen) return;
     if (this.gameMode !== 'arena') return;
+
+    if (slotIndex === 4) {
+      // Ultimate slot
+      const data = this.playerSpellData.get(this.localPlayerId);
+      if (!data || !data.ultimateId) return;
+      data.activeSlot = 'ultimate';
+      this.events.emit('spell-switched', {
+        activeSlot: 'ultimate',
+        spellId: data.ultimateId,
+        slots: { ...data.slots, ultimate: data.ultimateId },
+      });
+      return;
+    }
+
     const category = SLOT_KEYS[slotIndex];
     if (!category) return;
     const data = this.playerSpellData.get(this.localPlayerId);
@@ -1258,6 +1332,16 @@ export class GameScene extends Phaser.Scene {
     if (this.shopOpen) return;
     const uiScene = this.scene.get('UIScene');
     if (uiScene && uiScene.escMenuVisible) return;
+
+    // Ultimate slot: fire ultimate on click
+    if (this.gameMode === 'arena') {
+      const data = this.playerSpellData.get(this.localPlayerId);
+      if (data && data.activeSlot === 'ultimate') {
+        const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        this._activateUltimate(worldPt.x, worldPt.y);
+        return;
+      }
+    }
 
     const now = Date.now();
     const spellId = this.gameMode === 'arena'
@@ -1606,6 +1690,13 @@ export class GameScene extends Phaser.Scene {
       if (typeof data.upgradeId === 'string') this._handleShopBuyGlobal(peerId, data.upgradeId);
       return;
     }
+    if (data.action === 'shop-buy-ultimate') {
+      if (typeof data.ultId === 'string') {
+        this._handleShopBuyUltimate(peerId, data.ultId);
+        this._broadcastShopState();
+      }
+      return;
+    }
     if (data.action === 'shop-ready') {
       this._handleShopReady(peerId);
       return;
@@ -1677,6 +1768,10 @@ export class GameScene extends Phaser.Scene {
         const blinkDirX = data.targetX - wizard.x;
         const blinkDirY = data.targetY - wizard.y;
         this._executeBlink(peerId, blinkDirX, blinkDirY);
+        break;
+      }
+      case 'ultimate': {
+        this._executeUltimate(peerId, data.ultId, data.targetX, data.targetY);
         break;
       }
       case 'laser': {
@@ -2069,13 +2164,13 @@ export class GameScene extends Phaser.Scene {
     if (killerStats) { killerStats.kills++; killerStats.streak++; }
     if (victimStats) { victimStats.deaths++; victimStats.streak = 0; }
 
-    // Bounty: killing the bounty target gives bonus gold
-    if (this.gameMode === 'arena' && this.bountyTarget === victim.playerId) {
-      this.goldManager.gold.set(killerId, (this.goldManager.getGold(killerId) || 0) + 100);
-      this.bountyTarget = null;
+    // Bounty kill bonus (round-win streak)
+    if (this.gameMode === 'arena' && victim.bountyLevel > 0) {
+      const bountyGold = victim.bountyLevel * 50; // 50/100/150+ gold
+      this.goldManager.gold.set(killerId, (this.goldManager.getGold(killerId) || 0) + bountyGold);
     }
 
-    // Update bounty target (highest streak >= 3)
+    // Update bounty target (highest streak >= 3) — legacy kill-streak bounty
     let maxStreak = 2;
     let newBounty = null;
     this.killStats.forEach((stats, pid) => {
@@ -2383,6 +2478,12 @@ export class GameScene extends Phaser.Scene {
           // Track last hit for lava kill credit
           wizard.lastHitBy = fb.ownerPlayerId;
 
+          // Charge ultimate meter on damage dealt
+          if (this.gameMode === 'arena' && dealt > 0) {
+            const currentCharge = this.ultCharges.get(fb.ownerPlayerId) || 0;
+            this.ultCharges.set(fb.ownerPlayerId, Math.min(100, currentCharge + dealt * 1.5));
+          }
+
           // Lifesteal (from upgrade + vampire modifier)
           const totalLifesteal = (fb.lifesteal || 0) + (this.activeModifier?.globalLifesteal || 0);
           if (totalLifesteal > 0) {
@@ -2517,6 +2618,20 @@ export class GameScene extends Phaser.Scene {
         this.roundScoreAwarded = true;
         this.scores.set(winner.playerId, (this.scores.get(winner.playerId) || 0) + 1);
         this._roundWinnerId = winner.playerId;
+
+        // Update round win streaks for bounty
+        if (this.gameMode === 'arena') {
+          this.playerInfo.forEach(p => {
+            if (p.peerId === winner.playerId) {
+              this.roundWinStreaks.set(p.peerId, (this.roundWinStreaks.get(p.peerId) || 0) + 1);
+            } else {
+              this.roundWinStreaks.set(p.peerId, 0);
+            }
+          });
+          this.events.emit('bounty-update', {
+            bounties: Object.fromEntries(this.roundWinStreaks),
+          });
+        }
       } else {
         this._roundWinnerId = null;
       }
@@ -2918,6 +3033,291 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  _activateUltimate(targetX, targetY) {
+    if (!this.gameStarted || this.roundOver || this.countdownActive || this.shopOpen) return;
+    if (this.gameMode !== 'arena') return;
+
+    const spellData = this.playerSpellData.get(this.localPlayerId);
+    if (!spellData?.ultimateId) return;
+
+    const charge = this.ultCharges.get(this.localPlayerId) || 0;
+    if (charge < 100) return;
+    if (this.ultUsedThisRound.get(this.localPlayerId)) return;
+
+    const wizard = this.wizards.get(this.localPlayerId);
+    if (!wizard || !wizard.alive) return;
+
+    // If no target provided, use pointer
+    if (targetX === undefined) {
+      const pointer = this.input.activePointer;
+      const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      targetX = worldPt.x;
+      targetY = worldPt.y;
+    }
+
+    if (network.isHost) {
+      this._executeUltimate(this.localPlayerId, spellData.ultimateId, targetX, targetY);
+    } else {
+      network.sendInput({
+        type: 'input',
+        action: 'ultimate',
+        ultId: spellData.ultimateId,
+        targetX,
+        targetY,
+      });
+    }
+  }
+
+  _executeUltimate(playerId, ultId, targetX, targetY) {
+    if (this.gameMode !== 'arena') return;
+    const charge = this.ultCharges.get(playerId) || 0;
+    if (charge < 100) return;
+    if (this.ultUsedThisRound.get(playerId)) return;
+
+    const wizard = this.wizards.get(playerId);
+    if (!wizard || !wizard.alive) return;
+
+    this.ultCharges.set(playerId, 0);
+    this.ultUsedThisRound.set(playerId, true);
+
+    switch (ultId) {
+      case 'supernova': {
+        // Massive AoE knockback from self position
+        this.wizards.forEach((w) => {
+          if (w.playerId === playerId || !w.alive) return;
+          const dx = w.x - wizard.x;
+          const dy = w.y - wizard.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          if (dist < 150) {
+            w.takeDamage(30);
+            const falloff = 1 - (dist / 150) * 0.5;
+            w.applyKnockback((dx / dist) * 2500 * falloff, (dy / dist) * 2500 * falloff);
+          }
+        });
+        this._drawUltVfx(wizard.x, wizard.y, 'supernova', wizard.color);
+        break;
+      }
+      case 'meteor_storm': {
+        const enemies = Array.from(this.wizards.values()).filter(w => w.alive && w.playerId !== playerId);
+        for (let i = 0; i < 5; i++) {
+          const target = enemies.length > 0 ? enemies[i % enemies.length] : wizard;
+          const mx = target.x + (Math.random() - 0.5) * 100;
+          const my = target.y + (Math.random() - 0.5) * 100;
+          const tid = setTimeout(() => {
+            if (this.roundOver) return;
+            this._drawUltVfx(mx, my, 'meteor_strike', 0xff4400);
+            this.wizards.forEach(w => {
+              if (!w.alive) return;
+              const ddx = w.x - mx;
+              const ddy = w.y - my;
+              const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+              if (ddist < 80) {
+                w.takeDamage(20);
+                w.applyKnockback((ddx / ddist) * 1200, (ddy / ddist) * 1200);
+              }
+            });
+            this.cameras.main.shake(200, 0.006);
+          }, i * 350);
+          this._nativeTimers.push(tid);
+        }
+        break;
+      }
+      case 'arcane_barrage': {
+        const dx = targetX - wizard.x;
+        const dy = targetY - wizard.y;
+        const baseAngle = Math.atan2(dy, dx);
+        const spread = Math.PI * 0.7;
+        for (let i = 0; i < 12; i++) {
+          const angle = baseAngle + ((i / 11) - 0.5) * spread;
+          const speed = 280 + Math.random() * 60;
+          // Use existing Fireball class
+          const fb = new Fireball(
+            this, wizard.x, wizard.y,
+            Math.cos(angle) * speed,
+            Math.sin(angle) * speed,
+            playerId
+          );
+          fb.damage = 8;
+          fb.knockback = 400;
+          fb.radius = 6;
+          fb.spellId = 'arcane_barrage';
+          this.fireballs.push(fb);
+        }
+        this._drawUltVfx(wizard.x, wizard.y, 'barrage', 0xaa44ff);
+        break;
+      }
+      case 'black_hole': {
+        // Apply massive pull for 3 seconds using repeated setTimeout
+        const bhX = targetX;
+        const bhY = targetY;
+        this._drawUltVfx(bhX, bhY, 'black_hole', 0x6600aa);
+        const pullInterval = 50; // Apply pull every 50ms
+        const totalDuration = 3000;
+        const pullForce = 30; // Per-tick pull strength
+        for (let t = 0; t < totalDuration; t += pullInterval) {
+          const tid = setTimeout(() => {
+            if (this.roundOver) return;
+            this.wizards.forEach(w => {
+              if (!w.alive) return;
+              const ddx = bhX - w.x;
+              const ddy = bhY - w.y;
+              const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+              if (ddist < 200) {
+                const strength = pullForce * (1 - ddist / 200);
+                w.knockbackVel.x += (ddx / ddist) * strength;
+                w.knockbackVel.y += (ddy / ddist) * strength;
+                // Small tick damage
+                if (ddist < 50) w.takeDamage(0.5);
+              }
+            });
+          }, t);
+          this._nativeTimers.push(tid);
+        }
+        break;
+      }
+    }
+
+    this.cameras.main.shake(400, 0.012);
+
+    // Broadcast ultimate VFX to clients
+    if (network.isHost && !this.testMode) {
+      network.broadcastToClients({
+        type: 'ultimate-vfx',
+        ultId,
+        x: wizard.x,
+        y: wizard.y,
+        targetX,
+        targetY,
+        color: wizard.color,
+      });
+    }
+  }
+
+  _drawUltVfx(x, y, type, color) {
+    if (type === 'supernova') {
+      // Giant expanding rings
+      for (let i = 0; i < 3; i++) {
+        const ring = this.add.graphics();
+        ring.lineStyle(4 - i, color, 0.8 - i * 0.2);
+        ring.strokeCircle(0, 0, 20);
+        ring.x = x; ring.y = y;
+        this.tweens.add({
+          targets: ring,
+          scaleX: 8 + i * 2, scaleY: 8 + i * 2, alpha: 0,
+          duration: 600 + i * 200, delay: i * 100,
+          ease: 'Quad.easeOut',
+          onComplete: () => ring.destroy(),
+        });
+      }
+      // Central flash
+      const flash = this.add.graphics();
+      flash.fillStyle(0xffffff, 1);
+      flash.fillCircle(0, 0, 30);
+      flash.x = x; flash.y = y;
+      this.tweens.add({
+        targets: flash,
+        scaleX: 4, scaleY: 4, alpha: 0,
+        duration: 300, ease: 'Quad.easeOut',
+        onComplete: () => flash.destroy(),
+      });
+    } else if (type === 'meteor_strike') {
+      // Single meteor impact
+      const impact = this.add.graphics();
+      impact.fillStyle(color, 0.8);
+      impact.fillCircle(0, 0, 15);
+      impact.x = x; impact.y = y;
+      this.tweens.add({
+        targets: impact,
+        scaleX: 5, scaleY: 5, alpha: 0,
+        duration: 400, ease: 'Quad.easeOut',
+        onComplete: () => impact.destroy(),
+      });
+      // Ring
+      const ring = this.add.graphics();
+      ring.lineStyle(3, 0xff8800, 0.7);
+      ring.strokeCircle(0, 0, 15);
+      ring.x = x; ring.y = y;
+      this.tweens.add({
+        targets: ring,
+        scaleX: 6, scaleY: 6, alpha: 0,
+        duration: 500, ease: 'Quad.easeOut',
+        onComplete: () => ring.destroy(),
+      });
+      // Debris particles
+      for (let i = 0; i < 8; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const p = this.add.graphics();
+        p.fillStyle(color, 0.9);
+        p.fillCircle(0, 0, 2 + Math.random() * 3);
+        p.x = x; p.y = y;
+        this.tweens.add({
+          targets: p,
+          x: x + Math.cos(angle) * (30 + Math.random() * 40),
+          y: y + Math.sin(angle) * (30 + Math.random() * 40),
+          alpha: 0,
+          duration: 300 + Math.random() * 200,
+          onComplete: () => p.destroy(),
+        });
+      }
+    } else if (type === 'barrage') {
+      // Flash burst at caster
+      const flash = this.add.graphics();
+      flash.fillStyle(color, 0.6);
+      flash.fillCircle(0, 0, 20);
+      flash.x = x; flash.y = y;
+      this.tweens.add({
+        targets: flash,
+        scaleX: 3, scaleY: 3, alpha: 0,
+        duration: 300,
+        onComplete: () => flash.destroy(),
+      });
+    } else if (type === 'black_hole') {
+      // Swirling vortex effect over 3 seconds
+      // Central dark circle
+      const core = this.add.graphics();
+      core.fillStyle(0x000000, 0.8);
+      core.fillCircle(0, 0, 15);
+      core.lineStyle(2, color, 0.6);
+      core.strokeCircle(0, 0, 15);
+      core.x = x; core.y = y;
+      this.tweens.add({
+        targets: core,
+        scaleX: 2, scaleY: 2, alpha: 0,
+        duration: 3000,
+        onComplete: () => core.destroy(),
+      });
+      // Spiral particles
+      for (let i = 0; i < 20; i++) {
+        const p = this.add.graphics();
+        p.fillStyle(color, 0.5);
+        p.fillCircle(0, 0, 2);
+        const startAngle = (i / 20) * Math.PI * 2;
+        const startDist = 100 + Math.random() * 100;
+        p.x = x + Math.cos(startAngle) * startDist;
+        p.y = y + Math.sin(startAngle) * startDist;
+        this.tweens.add({
+          targets: p,
+          x: x, y: y, alpha: 0,
+          duration: 1500 + Math.random() * 1500,
+          delay: i * 100,
+          ease: 'Cubic.easeIn',
+          onComplete: () => p.destroy(),
+        });
+      }
+      // Pull ring indicator
+      const ring = this.add.graphics();
+      ring.lineStyle(1, color, 0.3);
+      ring.strokeCircle(0, 0, 200);
+      ring.x = x; ring.y = y;
+      this.tweens.add({
+        targets: ring,
+        alpha: 0,
+        duration: 3000,
+        onComplete: () => ring.destroy(),
+      });
+    }
+  }
+
   _broadcastGameState() {
     const killStatsObj = {};
     this.killStats.forEach((v, k) => { killStatsObj[k] = v; });
@@ -2933,6 +3333,7 @@ export class GameScene extends Phaser.Scene {
       hazards: this.hazardManager ? this.hazardManager.serialize() : [],
       winsToWin: this.winsToWin,
       activeModifier: this.activeModifier ? { id: this.activeModifier.id, ...this.activeModifier } : null,
+      ultCharges: Object.fromEntries(this.ultCharges),
     };
     network.broadcastToClients(state);
   }
@@ -2955,6 +3356,12 @@ export class GameScene extends Phaser.Scene {
     }
     if (data.bountyTarget !== undefined) this.bountyTarget = data.bountyTarget;
     if (data.winsToWin !== undefined) this.winsToWin = data.winsToWin;
+
+    // Sync ultimate charges from host
+    if (this.gameMode === 'arena' && data.ultCharges) {
+      const myCharge = data.ultCharges[this.localPlayerId] || 0;
+      this.ultCharges.set(this.localPlayerId, myCharge);
+    }
     if (data.activeModifier !== undefined) {
       this.activeModifier = data.activeModifier;
     }

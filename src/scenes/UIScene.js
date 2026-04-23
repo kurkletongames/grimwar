@@ -2,7 +2,7 @@ import * as Phaser from 'phaser';
 import { WIZARD_COLORS } from '../entities/Wizard.js';
 import { UPGRADES } from './GameScene.js';
 import { network } from '../network/NetworkManager.js';
-import { SPELL_DEFS, BLINK_DEFS, GLOBAL_UPGRADES, SPELL_CATEGORIES, SLOT_KEYS, SPELLS_BY_CATEGORY, BLINK_IDS, MAX_SPELL_SLOTS, MAX_TIER } from '../data/SpellDefinitions.js';
+import { SPELL_DEFS, BLINK_DEFS, GLOBAL_UPGRADES, SPELL_CATEGORIES, SLOT_KEYS, SPELLS_BY_CATEGORY, BLINK_IDS, MAX_SPELL_SLOTS, MAX_TIER, ULTIMATE_IDS } from '../data/SpellDefinitions.js';
 
 const RARITY_COLORS = {
   common:    0x888888,
@@ -124,6 +124,9 @@ export class UIScene extends Phaser.Scene {
     this.currentSlots = { fixed: 'fireball', bread_butter: null, tricky: null, power: null };
     this.activeSpellSlot = 'fixed';
 
+    // ---- Bounty data storage ----
+    this.bountyData = {};
+
     // ---- Gold display (arena mode, top right) ----
     this.goldText = this.add.text(w - 10, 30, '', {
       fontSize: '14px', color: '#ffa726', fontStyle: 'bold',
@@ -169,6 +172,10 @@ export class UIScene extends Phaser.Scene {
       this.gameOverContainer.setVisible(false);
       this.shopContainer.setVisible(false);
       this.powerUpActive = false;
+      // Redraw spell slots to show updated ultimate state
+      if (this.gameMode === 'arena') {
+        this._drawSpellSlots();
+      }
     };
     gameScene.events.on('round-start', this._onRoundStart);
 
@@ -305,6 +312,13 @@ export class UIScene extends Phaser.Scene {
     };
     gameScene.events.on('modifier-result', this._onModifierResult);
 
+    // Bounty updates (arena mode)
+    this._onBountyUpdate = (data) => {
+      this.bountyData = data.bounties; // Map of playerId -> bountyLevel
+      this._drawScoreboard();
+    };
+    gameScene.events.on('bounty-update', this._onBountyUpdate);
+
     // Clean up listeners and timers on shutdown
     this.events.on('shutdown', () => {
       if (this._shopTimerEvent) { this._shopTimerEvent.remove(); this._shopTimerEvent = null; }
@@ -328,6 +342,7 @@ export class UIScene extends Phaser.Scene {
       gameScene.events.off('show-modifier-vote', this._onShowModifierVote);
       gameScene.events.off('modifier-result', this._onModifierResult);
       gameScene.events.off('player-kill', this._onPlayerKill);
+      gameScene.events.off('bounty-update', this._onBountyUpdate);
     });
   }
 
@@ -366,6 +381,21 @@ export class UIScene extends Phaser.Scene {
         fontSize: '12px', color: '#ccc',
       }).setDepth(41);
       this.scoreboardTexts.push(nameText);
+
+      // Bounty indicator
+      const bountyLevel = this.bountyData ? this.bountyData[player.peerId] : 0;
+      if (bountyLevel && bountyLevel > 0) {
+        const bountyColors = { 1: 0xcd7f32, 2: 0xc0c0c0, 3: 0xffd700 }; // bronze, silver, gold
+        const bountyColor = bountyColors[Math.min(bountyLevel, 3)] || 0xffd700;
+        this.scoreboardGraphics.fillStyle(bountyColor, 1);
+        this.scoreboardGraphics.fillCircle(x + nameColW - 10, rowY + 7, 3);
+        if (bountyLevel >= 3) {
+          const bountyText = this.add.text(x + nameColW - 6, rowY - 1, 'BOUNTY', {
+            fontSize: '8px', color: '#ffd700', fontStyle: 'bold',
+          }).setDepth(41);
+          this.scoreboardTexts.push(bountyText);
+        }
+      }
 
       const dotsStartX = x + nameColW;
       for (let d = 0; d < this.winsToWin; d++) {
@@ -776,11 +806,19 @@ export class UIScene extends Phaser.Scene {
   _drawSpellSlots() {
     this.spellSlotsContainer.removeAll(true);
     this._slotCooldownGraphics = [];
+
+    const gameScene = this.scene.get('GameScene');
+    const localId = gameScene?.localPlayerId;
+    const spellData = localId ? gameScene?.playerSpellData?.get(localId) : null;
+    const hasUlt = spellData?.ultimateId;
+
+    const slotCount = hasUlt ? 5 : MAX_SPELL_SLOTS;
     const slotSize = 44;
     const gap = 6;
-    const totalW = MAX_SPELL_SLOTS * slotSize + (MAX_SPELL_SLOTS - 1) * gap;
+    const totalW = slotCount * slotSize + (slotCount - 1) * gap;
     const startX = -totalW / 2 + slotSize / 2;
 
+    // Draw regular 4 slots
     SLOT_KEYS.forEach((cat, i) => {
       const cx = startX + i * (slotSize + gap);
       const spellId = this.currentSlots[cat];
@@ -807,7 +845,7 @@ export class UIScene extends Phaser.Scene {
       // Cooldown overlay (drawn per-frame)
       const cdGraphics = this.add.graphics();
       this.spellSlotsContainer.add(cdGraphics);
-      this._slotCooldownGraphics.push({ graphics: cdGraphics, cx, cy: 0, size: slotSize, cat, spellId });
+      this._slotCooldownGraphics.push({ graphics: cdGraphics, cx, cy: 0, size: slotSize, cat, spellId, isUltimate: false });
 
       // Key number label
       const keyText = this.add.text(cx - slotSize / 2 + 4, -slotSize / 2 + 2, `${i + 1}`, {
@@ -821,6 +859,53 @@ export class UIScene extends Phaser.Scene {
       }).setOrigin(0.5, 0);
       this.spellSlotsContainer.add(catLabel);
     });
+
+    // Draw ultimate slot (5th)
+    if (hasUlt) {
+      const i = 4;
+      const cx = startX + i * (slotSize + gap);
+      const ultId = spellData.ultimateId;
+      const def = SPELL_DEFS[ultId];
+      const isActive = this.activeSpellSlot === 'ultimate';
+      const charge = gameScene?.ultCharges?.get(localId) || 0;
+      const usedThisRound = gameScene?.ultUsedThisRound?.get(localId) || false;
+
+      const bg = this.add.graphics();
+      bg.fillStyle(usedThisRound ? 0x0a0a1e : 0x16213e, 0.9);
+      bg.fillRoundedRect(cx - slotSize / 2, -slotSize / 2, slotSize, slotSize, 6);
+      bg.lineStyle(isActive ? 3 : 1, isActive ? 0xffdd00 : 0x333333, isActive ? 1 : 0.5);
+      bg.strokeRoundedRect(cx - slotSize / 2, -slotSize / 2, slotSize, slotSize, 6);
+      this.spellSlotsContainer.add(bg);
+
+      if (def) {
+        const icon = this.add.graphics();
+        icon.fillStyle(def.color, usedThisRound ? 0.2 : 0.8);
+        icon.fillCircle(cx, 0, 12);
+        icon.fillStyle(def.color, usedThisRound ? 0.1 : 0.3);
+        icon.fillCircle(cx, 0, 16);
+        this.spellSlotsContainer.add(icon);
+      }
+
+      // Charge overlay (drawn per-frame)
+      const chargeGraphics = this.add.graphics();
+      this.spellSlotsContainer.add(chargeGraphics);
+      this._slotCooldownGraphics.push({
+        graphics: chargeGraphics, cx, cy: 0, size: slotSize,
+        cat: 'ultimate', spellId: ultId, isUltimate: true,
+      });
+
+      // Key label
+      const keyText = this.add.text(cx - slotSize / 2 + 4, -slotSize / 2 + 2, '5', {
+        fontSize: '9px', color: '#666',
+      });
+      this.spellSlotsContainer.add(keyText);
+
+      // Label below
+      const catLabel = this.add.text(cx, slotSize / 2 + 4, 'Ultimate', {
+        fontSize: '7px', color: '#aa8800',
+      }).setOrigin(0.5, 0);
+      this.spellSlotsContainer.add(catLabel);
+    }
   }
 
   update() {
@@ -831,14 +916,39 @@ export class UIScene extends Phaser.Scene {
     const localId = gameScene.localPlayerId;
     const now = Date.now();
 
-    this._slotCooldownGraphics.forEach(({ graphics, cx, cy, size, cat }) => {
+    this._slotCooldownGraphics.forEach(({ graphics, cx, cy, size, cat, spellId, isUltimate }) => {
       graphics.clear();
-      const spellId = this.currentSlots[cat];
-      if (!spellId) return;
 
-      const castKey = gameScene._getSpellCastTimeKey(localId, spellId);
+      if (isUltimate) {
+        // Ultimate charge overlay — fills from bottom up
+        const charge = gameScene.ultCharges?.get(localId) || 0;
+        const usedThisRound = gameScene.ultUsedThisRound?.get(localId) || false;
+        const pct = Math.min(charge / 100, 1);
+
+        if (usedThisRound) {
+          // Dark "used" overlay
+          graphics.fillStyle(0x000000, 0.6);
+          graphics.fillRoundedRect(cx - size / 2 + 1, cy - size / 2 + 1, size - 2, size - 2, 5);
+        } else if (pct < 1) {
+          // Dark uncharged portion (top part)
+          const unchargedH = (size - 2) * (1 - pct);
+          graphics.fillStyle(0x000000, 0.5);
+          graphics.fillRoundedRect(cx - size / 2 + 1, cy - size / 2 + 1, size - 2, unchargedH, 3);
+        } else {
+          // Fully charged — golden glow pulse
+          const pulse = 0.3 + Math.sin(Date.now() * 0.006) * 0.15;
+          graphics.fillStyle(0xffdd00, pulse);
+          graphics.fillRoundedRect(cx - size / 2 + 1, cy - size / 2 + 1, size - 2, size - 2, 5);
+        }
+        return;
+      }
+
+      const slotSpellId = this.currentSlots[cat];
+      if (!slotSpellId) return;
+
+      const castKey = gameScene._getSpellCastTimeKey(localId, slotSpellId);
       const lastCast = gameScene.spellCastTimes.get(castKey) || 0;
-      const cd = gameScene._getSpellCooldown(localId, spellId);
+      const cd = gameScene._getSpellCooldown(localId, slotSpellId);
       const elapsed = now - lastCast;
       const pct = lastCast === 0 ? 0 : Math.max(0, 1 - elapsed / cd);
 
@@ -850,7 +960,7 @@ export class UIScene extends Phaser.Scene {
         // Cooldown sweep arc (fills clockwise from top)
         const readyPct = 1 - pct;
         if (readyPct > 0 && readyPct < 1) {
-          const def = SPELL_DEFS[spellId];
+          const def = SPELL_DEFS[slotSpellId];
           const color = def ? def.color : 0xffffff;
           graphics.lineStyle(2, color, 0.7);
           graphics.beginPath();
@@ -1315,6 +1425,76 @@ export class UIScene extends Phaser.Scene {
       });
       rowY += rowH + 2;
     });
+
+    // ---- Ultimates section (card layout matching spells) ----
+    const hasUlt = sd && sd.ultimateId;
+    const ultTopY = rowY + 8;
+    this.shopContainer.add(this.add.text(0, ultTopY, 'ULTIMATE (Key 5)', {
+      fontSize: '13px', color: '#ffdd00', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    const ultCardW = Math.min(120, (w - 60) / 4);
+    const ultCardH = 65;
+    const ultStartX = -(ULTIMATE_IDS.length * ultCardW + (ULTIMATE_IDS.length - 1) * 8) / 2 + ultCardW / 2;
+
+    ULTIMATE_IDS.forEach((ultId, i) => {
+      const def = SPELL_DEFS[ultId];
+      if (!def) return;
+      const cx = ultStartX + i * (ultCardW + 8);
+      const cy = ultTopY + 14 + ultCardH / 2;
+      const isEquipped = hasUlt && sd.ultimateId === ultId;
+      const isLocked = hasUlt && !isEquipped; // already bought a different one
+      const canBuy = !hasUlt && gold >= def.shopPrice;
+
+      const card = this.add.graphics();
+      const drawUCard = (hover) => {
+        card.clear();
+        card.fillStyle(isEquipped ? 0x1a3a1a : (isLocked ? 0x0a0a1e : (hover ? 0x1e2d52 : 0x16213e)), 0.95);
+        card.fillRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
+        card.lineStyle(hover ? 3 : 2, def.color, isEquipped ? 0.8 : (isLocked ? 0.15 : (hover ? 1 : 0.4)));
+        card.strokeRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
+      };
+      drawUCard(false);
+      this.shopContainer.add(card);
+
+      // Spell icon
+      const icon = this.add.graphics();
+      icon.fillStyle(def.color, isLocked ? 0.15 : (isEquipped ? 0.9 : 0.6));
+      icon.fillCircle(cx, cy - 14, 10);
+      icon.fillStyle(def.color, isLocked ? 0.05 : 0.2);
+      icon.fillCircle(cx, cy - 14, 14);
+      this.shopContainer.add(icon);
+
+      // Name
+      this.shopContainer.add(this.add.text(cx, cy + 6, def.name, {
+        fontSize: '11px', color: isLocked ? '#444' : '#fff', fontStyle: 'bold',
+      }).setOrigin(0.5));
+
+      // Price / status
+      const priceLabel = isEquipped ? 'EQUIPPED' : (isLocked ? 'LOCKED' : `${def.shopPrice}g`);
+      this.shopContainer.add(this.add.text(cx, cy + ultCardH / 2 - 8, priceLabel, {
+        fontSize: '10px', color: isEquipped ? '#4a4' : (isLocked ? '#444' : (canBuy ? '#ffa726' : '#666')), fontStyle: 'bold',
+      }).setOrigin(0.5));
+
+      if (!hasUlt) {
+        const zone = this.add.zone(cx, cy, ultCardW, ultCardH).setInteractive({ useHandCursor: true });
+        this.shopContainer.add(zone);
+        zone.on('pointerover', () => drawUCard(true));
+        zone.on('pointerout', () => drawUCard(false));
+        zone.on('pointerdown', () => {
+          card.clear();
+          card.fillStyle(0x1a3a1a, 0.95);
+          card.fillRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
+          card.lineStyle(2, 0x44ff44, 0.8);
+          card.strokeRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
+          zone.disableInteractive();
+          if (network.isHost) gameScene.submitShopBuyUltimate(ultId);
+          else gameScene.sendShopBuyUltimate(ultId);
+        });
+      }
+    });
+
+    rowY = ultTopY + 14 + ultCardH + 8;
 
     // ---- Ready button ----
     const readyY = Math.max(rowY + 10, h / 2 - 50);

@@ -9,6 +9,7 @@ export const SPELL_CATEGORIES = {
   bread_butter: { slot: 1, label: 'Bread & Butter', color: 0x44aaff },
   tricky:       { slot: 2, label: 'Tricky',         color: 0x44ff88 },
   power:        { slot: 3, label: 'Power',          color: 0xff4444 },
+  ultimate:     { slot: 4, label: 'Ultimate',       color: 0xffdd00 },
 };
 
 export const SLOT_KEYS = ['fixed', 'bread_butter', 'tricky', 'power'];
@@ -238,6 +239,62 @@ export const SPELL_DEFS = {
            apply: (s) => { s.damage += 8; s.knockback += 400; s.strikeRadius += 15; } },
     },
   },
+  // === ULTIMATES (charged by dealing damage) ===
+  supernova: {
+    id: 'supernova',
+    name: 'Supernova',
+    desc: 'Massive explosion centered on yourself. Huge knockback to all nearby enemies.',
+    category: 'ultimate',
+    color: 0xffdd00,
+    shopPrice: 300,
+    baseCooldown: 0, // charge-based, not cooldown-based
+    baseStats: {
+      damage: 30, knockback: 2500, radius: 150,
+    },
+    tiers: {},
+  },
+
+  meteor_storm: {
+    id: 'meteor_storm',
+    name: 'Meteor Storm',
+    desc: 'Rain 5 meteors across the arena targeting nearby enemies.',
+    category: 'ultimate',
+    color: 0xff4400,
+    shopPrice: 300,
+    baseCooldown: 0,
+    baseStats: {
+      damage: 20, knockback: 1200, radius: 80, meteorCount: 5,
+    },
+    tiers: {},
+  },
+
+  arcane_barrage: {
+    id: 'arcane_barrage',
+    name: 'Arcane Barrage',
+    desc: 'Unleash a rapid burst of 12 homing projectiles in a wide spread.',
+    category: 'ultimate',
+    color: 0xaa44ff,
+    shopPrice: 300,
+    baseCooldown: 0,
+    baseStats: {
+      damage: 8, knockback: 400, speed: 300, count: 12, radius: 6,
+    },
+    tiers: {},
+  },
+
+  black_hole: {
+    id: 'black_hole',
+    name: 'Black Hole',
+    desc: 'Create a massive gravity well that pulls all enemies inward for 3 seconds.',
+    category: 'ultimate',
+    color: 0x6600aa,
+    shopPrice: 300,
+    baseCooldown: 0,
+    baseStats: {
+      pullForce: 1800, radius: 200, duration: 3000, damage: 5,
+    },
+    tiers: {},
+  },
 };
 
 // ---- Blink variant definitions ----
@@ -321,6 +378,8 @@ export const SPELLS_BY_CATEGORY = {
 };
 
 export const BLINK_IDS = ['rush', 'extended_blink', 'swap'];
+
+export const ULTIMATE_IDS = ['supernova', 'meteor_storm', 'arcane_barrage', 'black_hole'];
 
 /** Global (non-spell) upgrades available in arena shop */
 export const GLOBAL_UPGRADES = [

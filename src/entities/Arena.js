@@ -87,27 +87,68 @@ export class Arena {
       this.maxRadius * 0.6
     );
 
-    // Arena floor (safe zone)
+    // Arena floor — radial gradient for depth (outer = floor color, center glows theme accent)
     this.arenaGraphics.clear();
     this.arenaGraphics.fillStyle(t.floor, 1);
     this.arenaGraphics.fillCircle(this.centerX, this.centerY, this.currentRadius);
+    // Mid-ring brighter wash
+    this.arenaGraphics.fillStyle(t.ring, 0.35);
+    this.arenaGraphics.fillCircle(this.centerX, this.centerY, this.currentRadius * 0.75);
+    // Inner spotlight — theme accent tint
+    this.arenaGraphics.fillStyle(t.border, 0.1);
+    this.arenaGraphics.fillCircle(this.centerX, this.centerY, this.currentRadius * 0.5);
+    this.arenaGraphics.fillStyle(t.border, 0.08);
+    this.arenaGraphics.fillCircle(this.centerX, this.centerY, this.currentRadius * 0.3);
 
-    // Texture rings
+    // Texture rings (slightly bolder)
     for (let r = this.currentRadius; r > 0; r -= 40) {
-      this.arenaGraphics.lineStyle(1, t.ring, 0.3);
+      this.arenaGraphics.lineStyle(1, t.ring, 0.45);
       this.arenaGraphics.strokeCircle(this.centerX, this.centerY, r);
     }
 
-    // Center mark
-    this.arenaGraphics.fillStyle(t.ring, 0.5);
-    this.arenaGraphics.fillCircle(this.centerX, this.centerY, 15);
+    // Runic summoning circle — rotates slowly, pulses in opacity
+    const runePulse = 0.5 + Math.sin(time * 1.2) * 0.2;
+    const runeRot = time * 0.3;
+    const innerR = 36;
+    const outerR = 52;
+    this.arenaGraphics.lineStyle(1.5, t.border, runePulse * 0.7);
+    this.arenaGraphics.strokeCircle(this.centerX, this.centerY, innerR);
+    this.arenaGraphics.lineStyle(1, t.border, runePulse * 0.5);
+    this.arenaGraphics.strokeCircle(this.centerX, this.centerY, outerR);
+    // Tick marks on outer ring — 8 evenly spaced, rotating
+    for (let i = 0; i < 8; i++) {
+      const a = runeRot + (i * Math.PI) / 4;
+      const tickStart = outerR - 4;
+      const tickEnd = outerR + 4;
+      this.arenaGraphics.lineStyle(1.5, t.border, runePulse * 0.8);
+      this.arenaGraphics.lineBetween(
+        this.centerX + Math.cos(a) * tickStart,
+        this.centerY + Math.sin(a) * tickStart,
+        this.centerX + Math.cos(a) * tickEnd,
+        this.centerY + Math.sin(a) * tickEnd,
+      );
+    }
 
-    // Border glow
+    // Center mark
+    this.arenaGraphics.fillStyle(t.border, 0.4 + Math.sin(time * 2) * 0.15);
+    this.arenaGraphics.fillCircle(this.centerX, this.centerY, 6);
+    this.arenaGraphics.fillStyle(t.ring, 0.6);
+    this.arenaGraphics.fillCircle(this.centerX, this.centerY, 3);
+
+    // Border glow — multi-layer rim
     this.borderGraphics.clear();
-    this.borderGraphics.lineStyle(3, t.border, 0.6 + Math.sin(time * 4) * 0.2);
+    const borderPulse = 0.6 + Math.sin(time * 4) * 0.2;
+    // Main crisp border
+    this.borderGraphics.lineStyle(3, t.border, borderPulse);
     this.borderGraphics.strokeCircle(this.centerX, this.centerY, this.currentRadius);
-    this.borderGraphics.lineStyle(6, t.border, 0.15);
+    // Soft outer halo
+    this.borderGraphics.lineStyle(6, t.border, 0.2);
     this.borderGraphics.strokeCircle(this.centerX, this.centerY, this.currentRadius + 3);
+    this.borderGraphics.lineStyle(10, t.border, 0.08);
+    this.borderGraphics.strokeCircle(this.centerX, this.centerY, this.currentRadius + 7);
+    // Thin inner highlight line
+    this.borderGraphics.lineStyle(1, t.ring, 0.6);
+    this.borderGraphics.strokeCircle(this.centerX, this.centerY, this.currentRadius - 2);
 
     // Outer wall
     this.wallGraphics.clear();

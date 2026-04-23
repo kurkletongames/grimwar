@@ -41,6 +41,7 @@ export class NetworkManager {
     this.onModifierResult = null;
     this.onLaser = null;
     this.onPlayerKill = null;
+    this.onUltimateVfx = null;
   }
 
   _generateCode() {
@@ -331,6 +332,9 @@ export class NetworkManager {
         case 'player-kill':
           if (this.onPlayerKill) this.onPlayerKill(data);
           break;
+        case 'ultimate-vfx':
+          if (this.onUltimateVfx) this.onUltimateVfx(data);
+          break;
         case 'show-shop':
           if (this.onShowShop) this.onShowShop(data);
           break;
@@ -424,6 +428,7 @@ export class NetworkManager {
     this.onModifierResult = null;
     this.onLaser = null;
     this.onPlayerKill = null;
+    this.onUltimateVfx = null;
   }
 }
 

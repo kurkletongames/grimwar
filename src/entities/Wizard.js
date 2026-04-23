@@ -54,6 +54,7 @@ export class Wizard {
     this.bonusSpeed = 0; // additional movement speed from arena upgrades
     this.sparkle = false; // secret sparkle effect
     this._sparkleTimer = 0;
+    this.bountyLevel = 0; // 0=none, 1=bronze, 2=silver, 3+=gold
 
     // Vulnerable mark — amplifies incoming damage/KB, applied by certain spells
     this.vulnerableUntil = 0;     // timestamp when mark expires
@@ -108,6 +109,31 @@ export class Wizard {
       this.glowGraphics.fillCircle(this.x, this.y, this.radius + 10);
       this.glowGraphics.fillStyle(0x4fc3f7, this.blinkGlowAlpha * 0.15);
       this.glowGraphics.fillCircle(this.x, this.y, this.radius + 18);
+    }
+
+    // Bounty indicator ring
+    if (this.bountyLevel > 0 && this.alive) {
+      const bountyColors = [0xcd7f32, 0xc0c0c0, 0xffd700]; // bronze, silver, gold
+      const bCol = bountyColors[Math.min(this.bountyLevel - 1, 2)];
+      const pulseScale = 1 + Math.sin(Date.now() * 0.004) * 0.1; // gentle pulse
+      const ringRadius = (WIZARD_RADIUS + 8) * pulseScale;
+
+      // Outer glow
+      this.glowGraphics.fillStyle(bCol, 0.08);
+      this.glowGraphics.fillCircle(this.x, this.y, ringRadius + 10);
+
+      // Ring
+      this.glowGraphics.lineStyle(2, bCol, 0.6);
+      this.glowGraphics.strokeCircle(this.x, this.y, ringRadius);
+
+      // Small crown/diamond indicators based on level
+      for (let i = 0; i < Math.min(this.bountyLevel, 3); i++) {
+        const dAngle = (i / Math.min(this.bountyLevel, 3)) * Math.PI * 2 - Math.PI / 2;
+        const dx = this.x + Math.cos(dAngle) * (ringRadius + 4);
+        const dy = this.y + Math.sin(dAngle) * (ringRadius + 4);
+        this.glowGraphics.fillStyle(bCol, 0.8);
+        this.glowGraphics.fillCircle(dx, dy, 3);
+      }
     }
 
     // Wizard body
@@ -620,6 +646,7 @@ export class Wizard {
       maxHealth: this.maxHealth,
       slowEffect: this.slowEffect,
       inGravity: this.inGravity,
+      bountyLevel: this.bountyLevel,
     };
   }
 
@@ -665,6 +692,7 @@ export class Wizard {
     if (state.maxHealth) this.maxHealth = state.maxHealth;
     this.slowEffect = state.slowEffect || 0;
     this.inGravity = state.inGravity || false;
+    if (state.bountyLevel !== undefined) this.bountyLevel = state.bountyLevel;
 
     this.draw();
   }

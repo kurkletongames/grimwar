@@ -31,9 +31,23 @@ const ROW_HEIGHT = 24;
 const SCOREBOARD_X = 14;
 const SCOREBOARD_Y = 14;
 
+const SPELL_ICON_IDS = [
+  'fireball', 'homing_missile', 'ricochet', 'color_spray',
+  'tether', 'mirror_image', 'vortex_wall',
+  'meteor', 'gravity_sphere', 'lightning_bolt',
+  'supernova', 'meteor_storm', 'arcane_barrage', 'black_hole',
+  'default_blink', 'rush', 'extended_blink', 'swap',
+];
+
 export class UIScene extends Phaser.Scene {
   constructor() {
     super({ key: 'UIScene' });
+  }
+
+  preload() {
+    SPELL_ICON_IDS.forEach((id) => {
+      this.load.svg(`icon-${id}`, `icons/${id}.svg`, { width: 64, height: 64 });
+    });
   }
 
   create() {
@@ -119,6 +133,9 @@ export class UIScene extends Phaser.Scene {
     this._localReady = false;
     this._shopReadyCount = { ready: 0, total: 0 };
 
+    // ---- Swap confirmation modal (sits above shop) ----
+    this.swapConfirmContainer = this.add.container(w / 2, h / 2).setDepth(70).setVisible(false);
+
     // ---- Spell slots HUD (arena mode, bottom center) ----
     this.spellSlotsContainer = this.add.container(w / 2, h - 50).setDepth(25).setVisible(false);
     this.currentSlots = { fixed: 'fireball', bread_butter: null, tricky: null, power: null };
@@ -174,6 +191,7 @@ export class UIScene extends Phaser.Scene {
       this.powerUpActive = false;
       // Redraw spell slots to show updated ultimate state
       if (this.gameMode === 'arena') {
+        if (this.goldText) this.goldText.setVisible(true);
         this._drawSpellSlots();
       }
     };
@@ -250,6 +268,7 @@ export class UIScene extends Phaser.Scene {
       if (this.gameMode === 'arena') {
         this._localReady = false;
         this._shopReadyCount = { ready: 0, total: 0 };
+        this._shopStartTime = Date.now();
         this._showShop(data);
       }
     };
@@ -257,6 +276,9 @@ export class UIScene extends Phaser.Scene {
 
     this._onShopClosed = () => {
       this.shopContainer.setVisible(false);
+      this._hideSwapConfirm();
+      if (this.goldText) this.goldText.setVisible(true);
+      this._shopStartTime = null;
       if (this._shopTimerEvent) {
         this._shopTimerEvent.remove();
         this._shopTimerEvent = null;
@@ -834,12 +856,21 @@ export class UIScene extends Phaser.Scene {
       this.spellSlotsContainer.add(bg);
 
       if (def) {
-        const icon = this.add.graphics();
-        icon.fillStyle(def.color, 0.8);
-        icon.fillCircle(cx, 0, 12);
-        icon.fillStyle(def.color, 0.3);
-        icon.fillCircle(cx, 0, 16);
-        this.spellSlotsContainer.add(icon);
+        const halo = this.add.graphics();
+        halo.fillStyle(def.color, 0.22);
+        halo.fillCircle(cx, 0, 18);
+        this.spellSlotsContainer.add(halo);
+        const iconKey = `icon-${def.id}`;
+        if (this.textures.exists(iconKey)) {
+          const img = this.add.image(cx, 0, iconKey).setDisplaySize(28, 28);
+          img.setTint(def.color);
+          this.spellSlotsContainer.add(img);
+        } else {
+          const fallback = this.add.graphics();
+          fallback.fillStyle(def.color, 0.8);
+          fallback.fillCircle(cx, 0, 12);
+          this.spellSlotsContainer.add(fallback);
+        }
       }
 
       // Cooldown overlay (drawn per-frame)
@@ -878,12 +909,22 @@ export class UIScene extends Phaser.Scene {
       this.spellSlotsContainer.add(bg);
 
       if (def) {
-        const icon = this.add.graphics();
-        icon.fillStyle(def.color, usedThisRound ? 0.2 : 0.8);
-        icon.fillCircle(cx, 0, 12);
-        icon.fillStyle(def.color, usedThisRound ? 0.1 : 0.3);
-        icon.fillCircle(cx, 0, 16);
-        this.spellSlotsContainer.add(icon);
+        const halo = this.add.graphics();
+        halo.fillStyle(def.color, usedThisRound ? 0.08 : 0.22);
+        halo.fillCircle(cx, 0, 18);
+        this.spellSlotsContainer.add(halo);
+        const iconKey = `icon-${def.id}`;
+        if (this.textures.exists(iconKey)) {
+          const img = this.add.image(cx, 0, iconKey).setDisplaySize(28, 28);
+          img.setTint(def.color);
+          img.setAlpha(usedThisRound ? 0.3 : 1);
+          this.spellSlotsContainer.add(img);
+        } else {
+          const fallback = this.add.graphics();
+          fallback.fillStyle(def.color, usedThisRound ? 0.2 : 0.8);
+          fallback.fillCircle(cx, 0, 12);
+          this.spellSlotsContainer.add(fallback);
+        }
       }
 
       // Charge overlay (drawn per-frame)
@@ -1183,6 +1224,231 @@ export class UIScene extends Phaser.Scene {
     zone.on('pointerdown', () => { draw('click'); onClick(); });
   }
 
+  _hideSwapConfirm() {
+    if (this.swapConfirmContainer) {
+      this.swapConfirmContainer.removeAll(true);
+      this.swapConfirmContainer.setVisible(false);
+    }
+  }
+
+  _showSwapConfirm({ currentDef, newDef, currentTier, onConfirm }) {
+    this.swapConfirmContainer.removeAll(true);
+    this.swapConfirmContainer.setVisible(true);
+
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+
+    // Compute gold invested in current tiers (for warning)
+    let goldInvested = 0;
+    if (currentTier > 0 && currentDef.tiers) {
+      for (let t = 1; t <= currentTier; t++) {
+        const td = currentDef.tiers[t];
+        if (td && typeof td.price === 'number') goldInvested += td.price;
+      }
+    }
+    const hasUpgrades = currentTier > 0;
+
+    // Dim backdrop (click outside to cancel)
+    const dim = this.add.graphics();
+    dim.fillStyle(0x000000, 0.75);
+    dim.fillRect(-w / 2, -h / 2, w, h);
+    this.swapConfirmContainer.add(dim);
+    const dimZone = this.add.zone(0, 0, w, h).setInteractive();
+    dimZone.on('pointerdown', () => this._hideSwapConfirm());
+    this.swapConfirmContainer.add(dimZone);
+
+    // Card — taller when warning is shown
+    const cardW = 560;
+    const cardH = hasUpgrades ? 340 : 270;
+    const card = this.add.graphics();
+    card.fillStyle(0x0f1a2e, 0.98);
+    card.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+    card.lineStyle(3, hasUpgrades ? 0xff6b35 : 0xe94560, 0.9);
+    card.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+    this.swapConfirmContainer.add(card);
+    const cardZone = this.add.zone(0, 0, cardW, cardH).setInteractive();
+    cardZone.on('pointerdown', () => {});
+    this.swapConfirmContainer.add(cardZone);
+
+    // Title
+    const titleY = -cardH / 2 + 26;
+    this.swapConfirmContainer.add(this.add.text(0, titleY, 'REPLACE ABILITY?', {
+      fontSize: '22px', color: hasUpgrades ? '#ff6b35' : '#e94560', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    // Current -> new layout
+    const slotY = titleY + 74;
+    const iconSize = 58;
+    const leftX = -130;
+    const rightX = 130;
+
+    this._drawIconOnContainer(this.swapConfirmContainer, leftX, slotY, iconSize, currentDef, 0.25);
+    this.swapConfirmContainer.add(this.add.text(leftX, slotY + 50, currentDef.name, {
+      fontSize: '16px', color: '#fff', fontStyle: 'bold',
+    }).setOrigin(0.5));
+    const tierLabel = currentTier > 0 ? `Level ${currentTier}` : 'Base (no upgrades)';
+    this.swapConfirmContainer.add(this.add.text(leftX, slotY + 70, tierLabel, {
+      fontSize: '13px', color: currentTier > 0 ? '#ffd77a' : '#9fb4d6', fontStyle: currentTier > 0 ? 'bold' : 'normal',
+    }).setOrigin(0.5));
+
+    // Arrow
+    const arrow = this.add.graphics();
+    arrow.fillStyle(hasUpgrades ? 0xff6b35 : 0xe94560, 0.9);
+    arrow.fillTriangle(-14, slotY - 12, -14, slotY + 12, 14, slotY);
+    this.swapConfirmContainer.add(arrow);
+
+    this._drawIconOnContainer(this.swapConfirmContainer, rightX, slotY, iconSize, newDef, 0.25);
+    this.swapConfirmContainer.add(this.add.text(rightX, slotY + 50, newDef.name, {
+      fontSize: '16px', color: '#fff', fontStyle: 'bold',
+    }).setOrigin(0.5));
+    this.swapConfirmContainer.add(this.add.text(rightX, slotY + 70, `${newDef.shopPrice}g`, {
+      fontSize: '14px', color: '#ffa726', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    // Warning banner — prominent when tier progress is being lost
+    if (hasUpgrades) {
+      const bannerY = slotY + 100;
+      const bannerW = cardW - 44;
+      const bannerH = 62;
+      const banner = this.add.graphics();
+      banner.fillStyle(0x3a1808, 0.95);
+      banner.fillRoundedRect(-bannerW / 2, bannerY, bannerW, bannerH, 8);
+      banner.lineStyle(2, 0xff6b35, 0.9);
+      banner.strokeRoundedRect(-bannerW / 2, bannerY, bannerW, bannerH, 8);
+      this.swapConfirmContainer.add(banner);
+
+      // Warning triangle icon
+      const warnTri = this.add.graphics();
+      const triX = -bannerW / 2 + 24;
+      const triY = bannerY + bannerH / 2;
+      warnTri.fillStyle(0xff6b35, 1);
+      warnTri.fillTriangle(triX - 11, triY + 10, triX + 11, triY + 10, triX, triY - 12);
+      warnTri.fillStyle(0x0f1a2e, 1);
+      warnTri.fillRect(triX - 1.5, triY - 5, 3, 8);
+      warnTri.fillRect(triX - 1.5, triY + 5, 3, 3);
+      this.swapConfirmContainer.add(warnTri);
+
+      this.swapConfirmContainer.add(this.add.text(triX + 20, bannerY + 10, 'UPGRADES WILL BE LOST', {
+        fontSize: '15px', color: '#ff9966', fontStyle: 'bold',
+      }));
+      const detail = `Level ${currentTier} progress (${goldInvested}g invested) will not be refunded.`;
+      this.swapConfirmContainer.add(this.add.text(triX + 20, bannerY + 32, detail, {
+        fontSize: '12px', color: '#ffccaa',
+      }));
+    }
+
+    // Buttons
+    const btnY = cardH / 2 - 54;
+    const btnW = 200, btnH = 44;
+    const gap = 20;
+
+    const cancelBg = this.add.graphics();
+    const drawCancel = (hover) => {
+      cancelBg.clear();
+      cancelBg.fillStyle(hover ? 0x3a3a4a : 0x242430, 0.95);
+      cancelBg.fillRoundedRect(-gap / 2 - btnW, btnY, btnW, btnH, 8);
+      cancelBg.lineStyle(hover ? 2 : 1.5, 0x888899, hover ? 1 : 0.6);
+      cancelBg.strokeRoundedRect(-gap / 2 - btnW, btnY, btnW, btnH, 8);
+    };
+    drawCancel(false);
+    this.swapConfirmContainer.add(cancelBg);
+    this.swapConfirmContainer.add(this.add.text(-gap / 2 - btnW / 2, btnY + btnH / 2, 'CANCEL', {
+      fontSize: '17px', color: '#ddd', fontStyle: 'bold',
+    }).setOrigin(0.5));
+    const cancelZone = this.add.zone(-gap / 2 - btnW / 2, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
+    this.swapConfirmContainer.add(cancelZone);
+    cancelZone.on('pointerover', () => drawCancel(true));
+    cancelZone.on('pointerout', () => drawCancel(false));
+    cancelZone.on('pointerdown', () => this._hideSwapConfirm());
+
+    const confirmBg = this.add.graphics();
+    const confirmBase = hasUpgrades ? 0x6a2010 : 0x5a1428;
+    const confirmHover = hasUpgrades ? 0x9a3418 : 0x8a2040;
+    const confirmStroke = hasUpgrades ? 0xff6b35 : 0xe94560;
+    const drawConfirm = (hover) => {
+      confirmBg.clear();
+      confirmBg.fillStyle(hover ? confirmHover : confirmBase, 0.95);
+      confirmBg.fillRoundedRect(gap / 2, btnY, btnW, btnH, 8);
+      confirmBg.lineStyle(hover ? 2.5 : 2, confirmStroke, hover ? 1 : 0.85);
+      confirmBg.strokeRoundedRect(gap / 2, btnY, btnW, btnH, 8);
+    };
+    drawConfirm(false);
+    this.swapConfirmContainer.add(confirmBg);
+    const confirmLabel = hasUpgrades ? 'REPLACE & LOSE UPGRADES' : 'REPLACE';
+    this.swapConfirmContainer.add(this.add.text(gap / 2 + btnW / 2, btnY + btnH / 2, confirmLabel, {
+      fontSize: hasUpgrades ? '13px' : '17px', color: '#ffdddd', fontStyle: 'bold',
+    }).setOrigin(0.5));
+    const confirmZone = this.add.zone(gap / 2 + btnW / 2, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
+    this.swapConfirmContainer.add(confirmZone);
+    confirmZone.on('pointerover', () => drawConfirm(true));
+    confirmZone.on('pointerout', () => drawConfirm(false));
+    confirmZone.on('pointerdown', () => {
+      confirmZone.disableInteractive();
+      this._hideSwapConfirm();
+      onConfirm();
+    });
+  }
+
+  _drawIconOnContainer(container, cx, cy, size, def, haloAlpha = 0.2) {
+    const halo = this.add.graphics();
+    halo.fillStyle(def.color, haloAlpha);
+    halo.fillCircle(cx, cy, size / 2 + 4);
+    container.add(halo);
+    const iconKey = `icon-${def.id}`;
+    if (this.textures.exists(iconKey)) {
+      const img = this.add.image(cx, cy, iconKey).setDisplaySize(size, size);
+      img.setTint(def.color);
+      container.add(img);
+    } else {
+      const fb = this.add.graphics();
+      fb.fillStyle(def.color, 0.85);
+      fb.fillCircle(cx, cy, size / 2);
+      container.add(fb);
+    }
+  }
+
+  _drawSpellIcon(cx, cy, size, def, opts = {}) {
+    const alpha = opts.alpha != null ? opts.alpha : 1;
+    const haloAlpha = opts.halo != null ? opts.halo : 0.18;
+    if (haloAlpha > 0) {
+      const halo = this.add.graphics();
+      halo.fillStyle(def.color, haloAlpha);
+      halo.fillCircle(cx, cy, size / 2 + 3);
+      this.shopContainer.add(halo);
+    }
+    const iconKey = `icon-${def.id}`;
+    if (this.textures.exists(iconKey)) {
+      const img = this.add.image(cx, cy, iconKey).setDisplaySize(size, size);
+      img.setTint(def.color);
+      img.setAlpha(alpha);
+      this.shopContainer.add(img);
+      return img;
+    }
+    const fallback = this.add.graphics();
+    fallback.fillStyle(def.color, alpha);
+    fallback.fillCircle(cx, cy, size / 2);
+    this.shopContainer.add(fallback);
+    return fallback;
+  }
+
+  _drawTierPips(x, y, count, max, color) {
+    const gap = 14;
+    for (let t = 1; t <= max; t++) {
+      const px = x + (t - 1) * gap;
+      const g = this.add.graphics();
+      if (t <= count) {
+        g.fillStyle(color, 1);
+        g.fillCircle(px, y, 5);
+        g.lineStyle(1.5, 0xffffff, 0.9);
+        g.strokeCircle(px, y, 5);
+      } else {
+        g.lineStyle(1.5, color, 0.4);
+        g.strokeCircle(px, y, 5);
+      }
+      this.shopContainer.add(g);
+    }
+  }
+
   _showShop(data) {
     this.shopContainer.removeAll(true);
     this.shopContainer.setVisible(true);
@@ -1197,360 +1463,487 @@ export class UIScene extends Phaser.Scene {
     const tiers = sd ? sd.spellTiers || {} : {};
     const blinkId = sd ? sd.blinkId : 'default_blink';
     const blinkTier = sd ? sd.blinkTier || 0 : 0;
+    const purchased = sd ? sd.purchasedUpgrades || [] : [];
+    const hasUlt = sd && sd.ultimateId;
 
     this._updateGoldDisplay(gold);
+    if (this.goldText) this.goldText.setVisible(false);
 
-    // Dim background
+    // ---- Dim background ----
     const dimBg = this.add.graphics();
-    dimBg.fillStyle(0x000000, 0.75);
+    dimBg.fillStyle(0x000000, 0.88);
     dimBg.fillRect(-w / 2, -h / 2, w, h);
     this.shopContainer.add(dimBg);
 
-    // Timer + Title + Gold header
+    // ---- Header bar (Gold | Title | Timer) ----
+    const headerY = -h / 2 + 40;
+
+    const goldPillW = 180, goldPillH = 36;
+    const goldPillX = -w / 2 + 24;
+    const goldBg = this.add.graphics();
+    goldBg.fillStyle(0x2a1f0a, 0.95);
+    goldBg.fillRoundedRect(goldPillX, headerY - goldPillH / 2, goldPillW, goldPillH, 18);
+    goldBg.lineStyle(2, 0xffa726, 0.7);
+    goldBg.strokeRoundedRect(goldPillX, headerY - goldPillH / 2, goldPillW, goldPillH, 18);
+    this.shopContainer.add(goldBg);
+    const coin = this.add.graphics();
+    coin.fillStyle(0xffc84d, 1);
+    coin.fillCircle(goldPillX + 20, headerY, 10);
+    coin.lineStyle(1.5, 0x8a5a10, 1);
+    coin.strokeCircle(goldPillX + 20, headerY, 10);
+    this.shopContainer.add(coin);
+    this.shopContainer.add(this.add.text(goldPillX + 38, headerY, `${gold} GOLD`, {
+      fontSize: '20px', color: '#ffd77a', fontStyle: 'bold',
+    }).setOrigin(0, 0.5));
+
+    this.shopContainer.add(this.add.text(0, headerY, 'SHOP', {
+      fontSize: '32px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5));
+
+    const timerPillW = 90, timerPillH = 36;
+    const timerPillX = w / 2 - 24 - timerPillW;
+    const timerBg = this.add.graphics();
+    timerBg.fillStyle(0x1a1a2e, 0.95);
+    timerBg.fillRoundedRect(timerPillX, headerY - timerPillH / 2, timerPillW, timerPillH, 18);
+    timerBg.lineStyle(2, 0x888888, 0.5);
+    timerBg.strokeRoundedRect(timerPillX, headerY - timerPillH / 2, timerPillW, timerPillH, 18);
+    this.shopContainer.add(timerBg);
     const shopDuration = data.shopDuration || 30000;
-    const startTime = Date.now();
-    const timerText = this.add.text(w / 2 - 20, -h / 2 + 12, '30s', { fontSize: '12px', color: '#888' }).setOrigin(1, 0);
+    if (!this._shopStartTime) this._shopStartTime = Date.now();
+    const startTime = this._shopStartTime;
+    const timerText = this.add.text(timerPillX + timerPillW / 2, headerY, '30s', {
+      fontSize: '20px', color: '#ccc', fontStyle: 'bold',
+    }).setOrigin(0.5);
     this.shopContainer.add(timerText);
     if (this._shopTimerEvent) this._shopTimerEvent.remove();
-    this._shopTimerEvent = this.time.addEvent({ delay: 500, loop: true, callback: () => {
+    this._shopTimerEvent = this.time.addEvent({ delay: 250, loop: true, callback: () => {
       const rem = Math.max(0, Math.ceil((shopDuration - (Date.now() - startTime)) / 1000));
       timerText.setText(`${rem}s`);
+      timerText.setColor(rem <= 5 ? '#ff6666' : '#ccc');
       if (rem <= 0 && this._shopTimerEvent) { this._shopTimerEvent.remove(); this._shopTimerEvent = null; }
     }});
 
-    this.shopContainer.add(this.add.text(0, -h / 2 + 14, 'SHOP', {
-      fontSize: '28px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0.5));
-    this.shopContainer.add(this.add.text(0, -h / 2 + 42, `Gold: ${gold}`, {
-      fontSize: '16px', color: '#ffa726', fontStyle: 'bold',
-    }).setOrigin(0.5));
+    // ---- Slot columns (1 / 2 / 3 / 4 / Blink) ----
+    const columns = [
+      { kind: 'spell', slotKey: 'fixed',        slotNum: 1, keyLabel: '1' },
+      { kind: 'spell', slotKey: 'bread_butter', slotNum: 2, keyLabel: '2' },
+      { kind: 'spell', slotKey: 'tricky',       slotNum: 3, keyLabel: '3' },
+      { kind: 'spell', slotKey: 'power',        slotNum: 4, keyLabel: '4' },
+      { kind: 'blink', slotKey: null,           slotNum: null, keyLabel: 'SPC' },
+    ];
 
-    // ---- Spell category columns (compact) ----
-    const categories = ['bread_butter', 'tricky', 'power'];
-    const colW = (w - 40) / 3;
-    const cardW = Math.min(colW - 8, 120);
-    const cardH = 75;
-    const colStartX = -w / 2 + 20;
-    const spellTopY = -h / 2 + 54;
+    const contentTop = headerY + 32;
+    const sideMargin = 18;
+    const colGap = 10;
+    const colCount = columns.length;
+    const totalColW = w - 2 * sideMargin - (colCount - 1) * colGap;
+    const colW = totalColW / colCount;
 
-    categories.forEach((cat, ci) => {
-      const catDef = SPELL_CATEGORIES[cat];
-      const colX = colStartX + ci * colW;
-      const colorHex = '#' + catDef.color.toString(16).padStart(6, '0');
+    const headerBoxH = 52;
+    const equippedCardH = 168;
+    const swapSectionH = 136;
 
-      this.shopContainer.add(this.add.text(colX + colW / 2, spellTopY, catDef.label, {
+    columns.forEach((entry, ci) => {
+      const colX = -w / 2 + sideMargin + ci * (colW + colGap);
+      const cx = colX + colW / 2;
+      const catColor = entry.kind === 'spell'
+        ? SPELL_CATEGORIES[entry.slotKey].color
+        : 0x4fc3f7;
+      const colorHex = '#' + catColor.toString(16).padStart(6, '0');
+
+      // --- Column header ---
+      const hdr = this.add.graphics();
+      hdr.fillStyle(0x0c1528, 0.95);
+      hdr.fillRoundedRect(colX, contentTop, colW, headerBoxH, 8);
+      hdr.lineStyle(2, catColor, 0.45);
+      hdr.strokeRoundedRect(colX, contentTop, colW, headerBoxH, 8);
+      this.shopContainer.add(hdr);
+
+      const titleText = entry.kind === 'spell' ? `SLOT ${entry.slotNum}` : 'BLINK';
+      const subText = entry.kind === 'spell'
+        ? SPELL_CATEGORIES[entry.slotKey].label
+        : 'Movement';
+
+      this.shopContainer.add(this.add.text(colX + 14, contentTop + 10, titleText, {
+        fontSize: '17px', color: '#fff', fontStyle: 'bold',
+      }));
+      this.shopContainer.add(this.add.text(colX + 14, contentTop + 30, subText, {
         fontSize: '13px', color: colorHex, fontStyle: 'bold',
+      }));
+
+      const badgeW = entry.keyLabel.length > 1 ? 36 : 26;
+      const badgeH = 26;
+      const badgeX = colX + colW - 14 - badgeW;
+      const badgeY = contentTop + (headerBoxH - badgeH) / 2;
+      const badge = this.add.graphics();
+      badge.fillStyle(0x1a2544, 1);
+      badge.fillRoundedRect(badgeX, badgeY, badgeW, badgeH, 5);
+      badge.lineStyle(1.5, catColor, 0.85);
+      badge.strokeRoundedRect(badgeX, badgeY, badgeW, badgeH, 5);
+      this.shopContainer.add(badge);
+      this.shopContainer.add(this.add.text(badgeX + badgeW / 2, badgeY + badgeH / 2, entry.keyLabel, {
+        fontSize: entry.keyLabel.length > 1 ? '12px' : '15px', color: '#fff', fontStyle: 'bold',
       }).setOrigin(0.5));
 
-      const spellIds = SPELLS_BY_CATEGORY[cat];
-      const equipped = slots[cat];
+      // --- Equipped card ---
+      const eqTop = contentTop + headerBoxH + 10;
+      const eqId = entry.kind === 'blink' ? blinkId : slots[entry.slotKey];
+      const eqDef = entry.kind === 'blink'
+        ? (eqId ? BLINK_DEFS[eqId] : null)
+        : (eqId ? SPELL_DEFS[eqId] : null);
+      const eqTier = entry.kind === 'blink' ? blinkTier : (tiers[eqId] || 0);
 
-      spellIds.forEach((spellId, si) => {
-        const def = SPELL_DEFS[spellId];
-        const cx = colX + colW / 2;
-        const cy = spellTopY + 16 + si * (cardH + 4) + cardH / 2;
-        const isEquipped = equipped === spellId;
-        const canBuy = !isEquipped && gold >= def.shopPrice;
+      const eqBg = this.add.graphics();
+      eqBg.fillStyle(0x12203b, 0.95);
+      eqBg.fillRoundedRect(colX, eqTop, colW, equippedCardH, 8);
+      eqBg.lineStyle(2, eqDef ? eqDef.color : 0x333333, eqDef ? 0.6 : 0.25);
+      eqBg.strokeRoundedRect(colX, eqTop, colW, equippedCardH, 8);
+      this.shopContainer.add(eqBg);
 
-        const card = this.add.graphics();
-        const drawCard = (hover) => {
-          card.clear();
-          card.fillStyle(isEquipped ? 0x1a3a1a : (hover ? 0x1e2d52 : 0x16213e), 0.95);
-          card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
-          card.lineStyle(hover ? 3 : 2, def.color, isEquipped ? 0.8 : (hover ? 1 : 0.4));
-          card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
+      if (eqDef) {
+        const iconSize = 56;
+        const iconX = colX + 18 + iconSize / 2;
+        const iconY = eqTop + 18 + iconSize / 2;
+        this._drawSpellIcon(iconX, iconY, iconSize, eqDef, { halo: 0.2 });
+
+        this.shopContainer.add(this.add.text(iconX + iconSize / 2 + 12, eqTop + 22, eqDef.name, {
+          fontSize: '17px', color: '#fff', fontStyle: 'bold',
+        }));
+        const tierTxt = eqTier >= MAX_TIER ? 'MAX LEVEL' : `Level ${eqTier}`;
+        this.shopContainer.add(this.add.text(iconX + iconSize / 2 + 12, eqTop + 44, tierTxt, {
+          fontSize: '12px', color: '#9fb4d6', fontStyle: 'bold',
+        }));
+
+        const hasTiers = eqDef.tiers && Object.keys(eqDef.tiers).length > 0;
+        if (hasTiers) {
+          this._drawTierPips(colX + 18, eqTop + 92, eqTier, MAX_TIER, eqDef.color);
+        }
+
+        const nextT = eqTier + 1;
+        const maxed = !hasTiers || nextT > MAX_TIER;
+        const tierDef = maxed ? null : eqDef.tiers[nextT];
+        const upBtnX = colX + 10;
+        const upBtnY = eqTop + 110;
+        const upBtnW = colW - 20;
+        const upBtnH = 48;
+
+        if (maxed) {
+          const maxBg = this.add.graphics();
+          maxBg.fillStyle(0x1a3a1a, 0.85);
+          maxBg.fillRoundedRect(upBtnX, upBtnY, upBtnW, upBtnH, 6);
+          maxBg.lineStyle(1.5, 0x4a8a4a, 0.55);
+          maxBg.strokeRoundedRect(upBtnX, upBtnY, upBtnW, upBtnH, 6);
+          this.shopContainer.add(maxBg);
+          const maxLabel = hasTiers ? 'FULLY UPGRADED' : 'NO UPGRADES';
+          this.shopContainer.add(this.add.text(upBtnX + upBtnW / 2, upBtnY + upBtnH / 2, maxLabel, {
+            fontSize: '13px', color: '#88cc88', fontStyle: 'bold',
+          }).setOrigin(0.5));
+        } else {
+          const canAfford = gold >= tierDef.price;
+          const upBg = this.add.graphics();
+          const drawUp = (hover) => {
+            upBg.clear();
+            const fill = canAfford ? (hover ? 0x2a4a20 : 0x1a2e14) : 0x2a1818;
+            upBg.fillStyle(fill, 0.95);
+            upBg.fillRoundedRect(upBtnX, upBtnY, upBtnW, upBtnH, 6);
+            upBg.lineStyle(hover && canAfford ? 2.5 : 1.5, canAfford ? 0xffa726 : 0x555555, canAfford ? (hover ? 1 : 0.75) : 0.4);
+            upBg.strokeRoundedRect(upBtnX, upBtnY, upBtnW, upBtnH, 6);
+          };
+          drawUp(false);
+          this.shopContainer.add(upBg);
+
+          this.shopContainer.add(this.add.text(upBtnX + 10, upBtnY + 6, `UPGRADE to Lv${nextT}`, {
+            fontSize: '12px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
+          }));
+          this.shopContainer.add(this.add.text(upBtnX + upBtnW - 10, upBtnY + 6, `${tierDef.price}g`, {
+            fontSize: '14px', color: canAfford ? '#ffd77a' : '#666', fontStyle: 'bold',
+          }).setOrigin(1, 0));
+          this.shopContainer.add(this.add.text(upBtnX + 10, upBtnY + 24, tierDef.desc, {
+            fontSize: '11px', color: canAfford ? '#ddd' : '#666',
+            wordWrap: { width: upBtnW - 20 },
+          }));
+
+          if (canAfford) {
+            const zone = this.add.zone(upBtnX + upBtnW / 2, upBtnY + upBtnH / 2, upBtnW, upBtnH).setInteractive({ useHandCursor: true });
+            this.shopContainer.add(zone);
+            zone.on('pointerover', () => drawUp(true));
+            zone.on('pointerout', () => drawUp(false));
+            zone.on('pointerdown', () => {
+              zone.disableInteractive();
+              if (network.isHost) gameScene.submitShopBuyTier(eqDef.id);
+              else gameScene.sendShopBuyTier(eqDef.id);
+            });
+          }
+        }
+      } else {
+        this.shopContainer.add(this.add.text(cx, eqTop + equippedCardH / 2, 'Pick an ability\nfrom below', {
+          fontSize: '13px', color: '#667', fontStyle: 'italic', align: 'center',
+        }).setOrigin(0.5));
+      }
+
+      // --- Swap / equip section ---
+      const swapTop = eqTop + equippedCardH + 12;
+      const swapLabel = entry.kind === 'blink' ? 'SWAP BLINK' : (eqDef ? 'SWAP FOR' : 'EQUIP');
+      this.shopContainer.add(this.add.text(colX + 14, swapTop, swapLabel, {
+        fontSize: '10px', color: '#778', fontStyle: 'bold',
+      }));
+
+      let options = [];
+      if (entry.kind === 'blink') {
+        options = BLINK_IDS.map((id) => BLINK_DEFS[id]).filter((d) => d && d.id !== blinkId);
+      } else if (entry.slotKey === 'fixed') {
+        options = [];
+      } else {
+        options = (SPELLS_BY_CATEGORY[entry.slotKey] || [])
+          .map((id) => SPELL_DEFS[id])
+          .filter((d) => d && d.id !== eqId);
+      }
+
+      const swRowH = 32;
+      const swGap = 4;
+      options.forEach((def, i) => {
+        const ry = swapTop + 14 + i * (swRowH + swGap);
+        if (ry + swRowH > swapTop + swapSectionH) return;
+        const canBuy = gold >= def.shopPrice;
+
+        const rowBg = this.add.graphics();
+        const drawRow = (hover) => {
+          rowBg.clear();
+          rowBg.fillStyle(hover && canBuy ? 0x1e2d52 : 0x0c1528, 0.95);
+          rowBg.fillRoundedRect(colX + 6, ry, colW - 12, swRowH, 5);
+          rowBg.lineStyle(1.5, def.color, hover && canBuy ? 0.95 : 0.35);
+          rowBg.strokeRoundedRect(colX + 6, ry, colW - 12, swRowH, 5);
         };
-        drawCard(false);
-        this.shopContainer.add(card);
+        drawRow(false);
+        this.shopContainer.add(rowBg);
 
-        const icon = this.add.graphics();
-        icon.fillStyle(def.color, isEquipped ? 0.9 : 0.6);
-        icon.fillCircle(cx, cy - 16, 10);
-        this.shopContainer.add(icon);
+        this._drawSpellIcon(colX + 22, ry + swRowH / 2, 22, def, { halo: 0.15 });
+        this.shopContainer.add(this.add.text(colX + 40, ry + swRowH / 2, def.name, {
+          fontSize: '13px', color: canBuy ? '#fff' : '#777', fontStyle: 'bold',
+        }).setOrigin(0, 0.5));
+        this.shopContainer.add(this.add.text(colX + colW - 14, ry + swRowH / 2, `${def.shopPrice}g`, {
+          fontSize: '13px', color: canBuy ? '#ffa726' : '#666', fontStyle: 'bold',
+        }).setOrigin(1, 0.5));
 
-        this.shopContainer.add(this.add.text(cx, cy + 4, def.name, {
-          fontSize: '13px', color: '#fff', fontStyle: 'bold',
-        }).setOrigin(0.5));
-
-        const priceLabel = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
-        this.shopContainer.add(this.add.text(cx, cy + cardH / 2 - 10, priceLabel, {
-          fontSize: '12px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
-        }).setOrigin(0.5));
-
-        if (!isEquipped) {
-          const zone = this.add.zone(cx, cy, cardW, cardH).setInteractive({ useHandCursor: true });
+        if (canBuy) {
+          const zone = this.add.zone(colX + 6 + (colW - 12) / 2, ry + swRowH / 2, colW - 12, swRowH).setInteractive({ useHandCursor: true });
           this.shopContainer.add(zone);
-          zone.on('pointerover', () => drawCard(true));
-          zone.on('pointerout', () => drawCard(false));
+          zone.on('pointerover', () => drawRow(true));
+          zone.on('pointerout', () => drawRow(false));
           zone.on('pointerdown', () => {
-            // Immediate visual feedback
-            card.clear();
-            card.fillStyle(0x1a3a1a, 0.95);
-            card.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
-            card.lineStyle(2, 0x44ff44, 0.8);
-            card.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 5);
-            zone.disableInteractive();
-            if (network.isHost) gameScene.submitShopBuySpell(spellId);
-            else gameScene.sendShopBuySpell(spellId);
+            const doPurchase = () => {
+              zone.disableInteractive();
+              if (entry.kind === 'blink') {
+                if (network.isHost) gameScene.submitShopBuyBlink(def.id);
+                else gameScene.sendShopBuyBlink(def.id);
+              } else {
+                if (network.isHost) gameScene.submitShopBuySpell(def.id);
+                else gameScene.sendShopBuySpell(def.id);
+              }
+            };
+            // Confirm only when replacing an existing ability (not empty slots)
+            if (eqDef) {
+              this._showSwapConfirm({
+                currentDef: eqDef,
+                newDef: def,
+                currentTier: eqTier,
+                onConfirm: doPurchase,
+              });
+            } else {
+              doPurchase();
+            }
           });
         }
       });
     });
 
-    // ---- Blink variants (compact row) ----
-    const blinkTopY = spellTopY + 16 + 3 * (cardH + 4) + 10;
-    this.shopContainer.add(this.add.text(0, blinkTopY, 'BLINK (Space)', {
-      fontSize: '13px', color: '#4fc3f7', fontStyle: 'bold',
-    }).setOrigin(0.5));
+    // ---- Ultimate strip ----
+    const stripTop = contentTop + headerBoxH + 10 + equippedCardH + 12 + swapSectionH + 16;
 
-    const blinkCardW = Math.min(120, (w - 60) / 3);
-    const blinkCardH = 50;
-    const blinkStartX = -(BLINK_IDS.length * blinkCardW + (BLINK_IDS.length - 1) * 8) / 2 + blinkCardW / 2;
-
-    BLINK_IDS.forEach((bid, i) => {
-      const def = BLINK_DEFS[bid];
-      const cx = blinkStartX + i * (blinkCardW + 8);
-      const cy = blinkTopY + 14 + blinkCardH / 2;
-      const isEquipped = blinkId === bid;
-      const canBuy = !isEquipped && gold >= def.shopPrice;
-
-      const card = this.add.graphics();
-      const drawBCard = (hover) => {
-        card.clear();
-        card.fillStyle(isEquipped ? 0x1a3a1a : (hover ? 0x1e2d52 : 0x16213e), 0.95);
-        card.fillRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
-        card.lineStyle(hover ? 3 : 2, def.color, isEquipped ? 0.8 : (hover ? 1 : 0.4));
-        card.strokeRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
-      };
-      drawBCard(false);
-      this.shopContainer.add(card);
-
-      this.shopContainer.add(this.add.text(cx, cy - 8, def.name, {
-        fontSize: '12px', color: '#fff', fontStyle: 'bold',
-      }).setOrigin(0.5));
-
-      const label = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
-      this.shopContainer.add(this.add.text(cx, cy + 10, label, {
-        fontSize: '11px', color: isEquipped ? '#4a4' : (canBuy ? '#ffa726' : '#666'), fontStyle: 'bold',
-      }).setOrigin(0.5));
-
-      if (!isEquipped) {
-        const zone = this.add.zone(cx, cy, blinkCardW, blinkCardH).setInteractive({ useHandCursor: true });
-        this.shopContainer.add(zone);
-        zone.on('pointerover', () => drawBCard(true));
-        zone.on('pointerout', () => drawBCard(false));
-        zone.on('pointerdown', () => {
-          card.clear();
-          card.fillStyle(0x1a3a1a, 0.95);
-          card.fillRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
-          card.lineStyle(2, 0x44ff44, 0.8);
-          card.strokeRoundedRect(cx - blinkCardW / 2, cy - blinkCardH / 2, blinkCardW, blinkCardH, 5);
-          zone.disableInteractive();
-          if (network.isHost) gameScene.submitShopBuyBlink(bid);
-          else gameScene.sendShopBuyBlink(bid);
-        });
-      }
-    });
-
-    // ---- Upgrades section (compact rows) ----
-    const upgTopY = blinkTopY + 14 + blinkCardH + 8;
-    this.shopContainer.add(this.add.text(-w / 2 + 20, upgTopY, 'UPGRADES', {
-      fontSize: '14px', color: '#4fc3f7', fontStyle: 'bold',
+    this.shopContainer.add(this.add.text(-w / 2 + 24, stripTop, 'ULTIMATE', {
+      fontSize: '15px', color: '#ffdd00', fontStyle: 'bold',
     }));
-
-    let rowY = upgTopY + 16;
-    const rowH = 26;
-    const rowW = w - 50;
-    const rowX = -w / 2 + 20;
-
-    // Spell tier upgrades
-    const ownedSpells = Object.values(slots).filter(Boolean);
-    ownedSpells.forEach((spellId) => {
-      const def = SPELL_DEFS[spellId];
-      if (!def || !def.tiers) return;
-      const currentTier = tiers[spellId] || 0;
-      const nextTier = currentTier + 1;
-      const maxed = nextTier > MAX_TIER;
-      const tierDef = maxed ? null : def.tiers[nextTier];
-      const canAfford = tierDef && gold >= tierDef.price;
-      const colorHex = '#' + def.color.toString(16).padStart(6, '0');
-
-      // Tier dots inline with name
-      let label = `${def.name} `;
-      for (let t = 1; t <= MAX_TIER; t++) label += t <= currentTier ? '\u25CF' : '\u25CB';
-      label += maxed ? '  MAX' : `  Lv${nextTier}: ${tierDef.desc}`;
-      const price = maxed ? '' : `${tierDef.price}g`;
-
-      this._makeShopRow(rowX, rowY, rowW, rowH, label, price, canAfford && !maxed, () => {
-        if (!maxed) {
-          if (network.isHost) gameScene.submitShopBuyTier(spellId);
-          else gameScene.sendShopBuyTier(spellId);
-        }
-      });
-      rowY += rowH + 2;
-    });
-
-    // Blink tier upgrade
-    if (blinkId !== 'default_blink') {
-      const bDef = BLINK_DEFS[blinkId];
-      if (bDef && bDef.tiers) {
-        const nextBT = blinkTier + 1;
-        const bMaxed = nextBT > MAX_TIER;
-        const bTierDef = bMaxed ? null : bDef.tiers[nextBT];
-        const bCanAfford = bTierDef && gold >= bTierDef.price;
-
-        let label = `${bDef.name} `;
-        for (let t = 1; t <= MAX_TIER; t++) label += t <= blinkTier ? '\u25CF' : '\u25CB';
-        label += bMaxed ? '  MAX' : `  Lv${nextBT}: ${bTierDef.desc}`;
-        const price = bMaxed ? '' : `${bTierDef.price}g`;
-
-        this._makeShopRow(rowX, rowY, rowW, rowH, label, price, bCanAfford && !bMaxed, () => {
-          if (!bMaxed) {
-            if (network.isHost) gameScene.submitShopBuyTier(blinkId);
-            else gameScene.sendShopBuyTier(blinkId);
-          }
-        });
-        rowY += rowH + 2;
-      }
+    const uBadgeX = -w / 2 + 110;
+    const uBadge = this.add.graphics();
+    uBadge.fillStyle(0x2a2a10, 1);
+    uBadge.fillRoundedRect(uBadgeX, stripTop - 2, 26, 22, 4);
+    uBadge.lineStyle(1.5, 0xffdd00, 0.85);
+    uBadge.strokeRoundedRect(uBadgeX, stripTop - 2, 26, 22, 4);
+    this.shopContainer.add(uBadge);
+    this.shopContainer.add(this.add.text(uBadgeX + 13, stripTop + 9, '5', {
+      fontSize: '14px', color: '#ffdd00', fontStyle: 'bold',
+    }).setOrigin(0.5));
+    if (hasUlt) {
+      this.shopContainer.add(this.add.text(uBadgeX + 36, stripTop + 9, '(one per game)', {
+        fontSize: '11px', color: '#666', fontStyle: 'italic',
+      }).setOrigin(0, 0.5));
     }
 
-    // Global upgrades
-    const purchased = sd ? sd.purchasedUpgrades || [] : [];
-    GLOBAL_UPGRADES.forEach((upg) => {
-      const timesBought = purchased.filter((id) => id === upg.id).length;
-      const actualPrice = upg.price + (upg.priceIncrease || 0) * timesBought;
-      this._makeShopRow(rowX, rowY, rowW, rowH, `${upg.title} — ${upg.desc}`, `${actualPrice}g`, gold >= actualPrice, () => {
-        if (network.isHost) gameScene.submitShopBuyGlobal(upg.id);
-        else gameScene.sendShopBuyGlobal(upg.id);
-      });
-      rowY += rowH + 2;
-    });
+    const ultCardY = stripTop + 24;
+    const ultCardH = 64;
+    const ultCount = ULTIMATE_IDS.length;
+    const ultAvailW = w - 2 * sideMargin;
+    const ultCardW = Math.min(260, (ultAvailW - (ultCount - 1) * 10) / ultCount);
+    const ultTotalW = ultCardW * ultCount + (ultCount - 1) * 10;
+    const ultStartX = -ultTotalW / 2;
 
-    // ---- Ultimates section (card layout matching spells) ----
-    const hasUlt = sd && sd.ultimateId;
-    const ultTopY = rowY + 8;
-    this.shopContainer.add(this.add.text(0, ultTopY, 'ULTIMATE (Key 5)', {
-      fontSize: '13px', color: '#ffdd00', fontStyle: 'bold',
-    }).setOrigin(0.5));
+    const currentUltDef = hasUlt ? SPELL_DEFS[sd.ultimateId] : null;
 
-    const ultCardW = Math.min(120, (w - 60) / 4);
-    const ultCardH = 65;
-    const ultStartX = -(ULTIMATE_IDS.length * ultCardW + (ULTIMATE_IDS.length - 1) * 8) / 2 + ultCardW / 2;
-
-    ULTIMATE_IDS.forEach((ultId, i) => {
-      const def = SPELL_DEFS[ultId];
+    ULTIMATE_IDS.forEach((uid, i) => {
+      const def = SPELL_DEFS[uid];
       if (!def) return;
-      const cx = ultStartX + i * (ultCardW + 8);
-      const cy = ultTopY + 14 + ultCardH / 2;
-      const isEquipped = hasUlt && sd.ultimateId === ultId;
-      const isLocked = hasUlt && !isEquipped; // already bought a different one
-      const canBuy = !hasUlt && gold >= def.shopPrice;
+      const ux = ultStartX + i * (ultCardW + 10);
+      const isEquipped = hasUlt && sd.ultimateId === uid;
+      const canAfford = gold >= def.shopPrice;
+      const canBuy = !isEquipped && canAfford;
 
       const card = this.add.graphics();
-      const drawUCard = (hover) => {
+      const drawCard = (hover) => {
         card.clear();
-        card.fillStyle(isEquipped ? 0x1a3a1a : (isLocked ? 0x0a0a1e : (hover ? 0x1e2d52 : 0x16213e)), 0.95);
-        card.fillRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
-        card.lineStyle(hover ? 3 : 2, def.color, isEquipped ? 0.8 : (isLocked ? 0.15 : (hover ? 1 : 0.4)));
-        card.strokeRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
+        const fill = isEquipped ? 0x1a3a1a : (hover && canBuy ? 0x1e2d52 : 0x12203b);
+        card.fillStyle(fill, 0.95);
+        card.fillRoundedRect(ux, ultCardY, ultCardW, ultCardH, 6);
+        card.lineStyle(hover && canBuy ? 3 : 2, def.color, isEquipped ? 0.9 : (hover && canBuy ? 1 : 0.5));
+        card.strokeRoundedRect(ux, ultCardY, ultCardW, ultCardH, 6);
       };
-      drawUCard(false);
+      drawCard(false);
       this.shopContainer.add(card);
 
-      // Spell icon
-      const icon = this.add.graphics();
-      icon.fillStyle(def.color, isLocked ? 0.15 : (isEquipped ? 0.9 : 0.6));
-      icon.fillCircle(cx, cy - 14, 10);
-      icon.fillStyle(def.color, isLocked ? 0.05 : 0.2);
-      icon.fillCircle(cx, cy - 14, 14);
-      this.shopContainer.add(icon);
+      this._drawSpellIcon(ux + 28, ultCardY + ultCardH / 2, 38, def, { halo: 0.22 });
 
-      // Name
-      this.shopContainer.add(this.add.text(cx, cy + 6, def.name, {
-        fontSize: '11px', color: isLocked ? '#444' : '#fff', fontStyle: 'bold',
-      }).setOrigin(0.5));
+      this.shopContainer.add(this.add.text(ux + 54, ultCardY + 8, def.name, {
+        fontSize: '14px', color: '#fff', fontStyle: 'bold',
+      }));
+      const priceLabel = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
+      this.shopContainer.add(this.add.text(ux + 54, ultCardY + 26, priceLabel, {
+        fontSize: '13px',
+        color: isEquipped ? '#6af06a' : (canAfford ? '#ffa726' : '#888'),
+        fontStyle: 'bold',
+      }));
+      const descTxt = def.desc && def.desc.length > 46 ? def.desc.slice(0, 43) + '...' : (def.desc || '');
+      this.shopContainer.add(this.add.text(ux + 54, ultCardY + 44, descTxt, {
+        fontSize: '10px', color: '#99a',
+      }));
 
-      // Price / status
-      const priceLabel = isEquipped ? 'EQUIPPED' : (isLocked ? 'LOCKED' : `${def.shopPrice}g`);
-      this.shopContainer.add(this.add.text(cx, cy + ultCardH / 2 - 8, priceLabel, {
-        fontSize: '10px', color: isEquipped ? '#4a4' : (isLocked ? '#444' : (canBuy ? '#ffa726' : '#666')), fontStyle: 'bold',
-      }).setOrigin(0.5));
-
-      if (!hasUlt) {
-        const zone = this.add.zone(cx, cy, ultCardW, ultCardH).setInteractive({ useHandCursor: true });
+      if (canBuy) {
+        const zone = this.add.zone(ux + ultCardW / 2, ultCardY + ultCardH / 2, ultCardW, ultCardH).setInteractive({ useHandCursor: true });
         this.shopContainer.add(zone);
-        zone.on('pointerover', () => drawUCard(true));
-        zone.on('pointerout', () => drawUCard(false));
+        zone.on('pointerover', () => drawCard(true));
+        zone.on('pointerout', () => drawCard(false));
         zone.on('pointerdown', () => {
-          card.clear();
-          card.fillStyle(0x1a3a1a, 0.95);
-          card.fillRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
-          card.lineStyle(2, 0x44ff44, 0.8);
-          card.strokeRoundedRect(cx - ultCardW / 2, cy - ultCardH / 2, ultCardW, ultCardH, 5);
-          zone.disableInteractive();
-          if (network.isHost) gameScene.submitShopBuyUltimate(ultId);
-          else gameScene.sendShopBuyUltimate(ultId);
+          const doPurchase = () => {
+            zone.disableInteractive();
+            if (network.isHost) gameScene.submitShopBuyUltimate(uid);
+            else gameScene.sendShopBuyUltimate(uid);
+          };
+          if (currentUltDef) {
+            this._showSwapConfirm({
+              currentDef: currentUltDef,
+              newDef: def,
+              currentTier: 0,
+              onConfirm: doPurchase,
+            });
+          } else {
+            doPurchase();
+          }
         });
       }
     });
 
-    rowY = ultTopY + 14 + ultCardH + 8;
+    // ---- Passive upgrades strip ----
+    const gupTop = ultCardY + ultCardH + 16;
+    this.shopContainer.add(this.add.text(-w / 2 + 24, gupTop, 'PASSIVE UPGRADES', {
+      fontSize: '15px', color: '#4fc3f7', fontStyle: 'bold',
+    }));
+
+    const gupCardsY = gupTop + 24;
+    const gupCount = GLOBAL_UPGRADES.length;
+    const gupCardH = 50;
+    const gupCardW = Math.min(300, (ultAvailW - (gupCount - 1) * 10) / gupCount);
+    const gupTotalW = gupCardW * gupCount + (gupCount - 1) * 10;
+    const gupStartX = -gupTotalW / 2;
+
+    GLOBAL_UPGRADES.forEach((upg, i) => {
+      const gx = gupStartX + i * (gupCardW + 10);
+      const timesBought = purchased.filter((id) => id === upg.id).length;
+      const actualPrice = upg.price + (upg.priceIncrease || 0) * timesBought;
+      const canAfford = gold >= actualPrice;
+
+      const gbg = this.add.graphics();
+      const drawG = (hover) => {
+        gbg.clear();
+        gbg.fillStyle(hover && canAfford ? 0x1e2d52 : 0x0f1a2e, 0.95);
+        gbg.fillRoundedRect(gx, gupCardsY, gupCardW, gupCardH, 5);
+        gbg.lineStyle(hover && canAfford ? 2 : 1.5, canAfford ? 0x4fc3f7 : 0x555555, hover && canAfford ? 1 : 0.5);
+        gbg.strokeRoundedRect(gx, gupCardsY, gupCardW, gupCardH, 5);
+      };
+      drawG(false);
+      this.shopContainer.add(gbg);
+
+      this.shopContainer.add(this.add.text(gx + 12, gupCardsY + 7, upg.title, {
+        fontSize: '14px', color: '#fff', fontStyle: 'bold',
+      }));
+      this.shopContainer.add(this.add.text(gx + 12, gupCardsY + 27, upg.desc, {
+        fontSize: '11px', color: '#99a',
+      }));
+      this.shopContainer.add(this.add.text(gx + gupCardW - 12, gupCardsY + gupCardH / 2, `${actualPrice}g`, {
+        fontSize: '16px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
+      }).setOrigin(1, 0.5));
+
+      if (canAfford) {
+        const zone = this.add.zone(gx + gupCardW / 2, gupCardsY + gupCardH / 2, gupCardW, gupCardH).setInteractive({ useHandCursor: true });
+        this.shopContainer.add(zone);
+        zone.on('pointerover', () => drawG(true));
+        zone.on('pointerout', () => drawG(false));
+        zone.on('pointerdown', () => {
+          zone.disableInteractive();
+          if (network.isHost) gameScene.submitShopBuyGlobal(upg.id);
+          else gameScene.sendShopBuyGlobal(upg.id);
+        });
+      }
+    });
 
     // ---- Ready button ----
-    const readyY = Math.max(rowY + 10, h / 2 - 50);
-
+    const readyBandY = gupCardsY + gupCardH + 24;
+    const finalReadyY = Math.min(readyBandY, h / 2 - 70);
     const rc = this._shopReadyCount;
-    this._shopReadyText = this.add.text(0, readyY, `${rc.ready || 0}/${rc.total || '?'} Ready`, {
-      fontSize: '10px', color: '#888',
+    this._shopReadyText = this.add.text(0, finalReadyY, `${rc.ready || 0}/${rc.total || '?'} Players Ready`, {
+      fontSize: '12px', color: '#888',
     }).setOrigin(0.5);
     this.shopContainer.add(this._shopReadyText);
 
-    const btnW = 140;
-    const btnH = 30;
-    const btnY = readyY + 14;
+    const btnW = 220, btnH = 44;
+    const btnY = finalReadyY + 14;
     const readyBtn = this.add.graphics();
     const alreadyReady = this._localReady;
-
-    if (alreadyReady) {
-      readyBtn.fillStyle(0x0f3f0f, 0.95);
-      readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-      readyBtn.lineStyle(2, 0x44ff44, 0.4);
-      readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-    } else {
-      readyBtn.fillStyle(0x1a6a1a, 0.95);
-      readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-      readyBtn.lineStyle(2, 0x44ff44, 0.7);
-      readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-    }
+    const drawReady = (hover) => {
+      readyBtn.clear();
+      const fill = alreadyReady ? 0x0f3f0f : (hover ? 0x2a8a2a : 0x1a6a1a);
+      readyBtn.fillStyle(fill, 0.95);
+      readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 8);
+      readyBtn.lineStyle(hover && !alreadyReady ? 3 : 2, 0x44ff44, alreadyReady ? 0.4 : (hover ? 1 : 0.75));
+      readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 8);
+    };
+    drawReady(false);
     this.shopContainer.add(readyBtn);
 
     const readyLabel = this.add.text(0, btnY + btnH / 2, alreadyReady ? 'READY!' : 'READY', {
-      fontSize: '12px', color: alreadyReady ? '#aaffaa' : '#44ff44', fontStyle: 'bold',
+      fontSize: '20px', color: alreadyReady ? '#aaffaa' : '#44ff44', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.shopContainer.add(readyLabel);
 
     if (!alreadyReady) {
       const readyZone = this.add.zone(0, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
       this.shopContainer.add(readyZone);
-      readyZone.on('pointerover', () => {
-        readyBtn.clear();
-        readyBtn.fillStyle(0x228a22, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-        readyBtn.lineStyle(3, 0x44ff44, 1); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-      });
-      readyZone.on('pointerout', () => {
-        readyBtn.clear();
-        readyBtn.fillStyle(0x1a6a1a, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-        readyBtn.lineStyle(2, 0x44ff44, 0.7); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-      });
+      readyZone.on('pointerover', () => drawReady(true));
+      readyZone.on('pointerout', () => drawReady(false));
       readyZone.on('pointerdown', () => {
         this._localReady = true;
         gameScene.submitShopReady();
         readyLabel.setText('READY!');
         readyLabel.setColor('#aaffaa');
         readyZone.disableInteractive();
-        readyBtn.clear();
-        readyBtn.fillStyle(0x0f3f0f, 0.95); readyBtn.fillRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
-        readyBtn.lineStyle(2, 0x44ff44, 0.4); readyBtn.strokeRoundedRect(-btnW / 2, btnY, btnW, btnH, 6);
+        drawReady(false);
       });
     }
   }

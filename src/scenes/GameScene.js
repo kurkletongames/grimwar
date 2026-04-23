@@ -51,8 +51,8 @@ export const UPGRADES = [
     rarity: 'common', apply: (u) => { u.cooldownReduction += 300; },
   },
   {
-    id: 'hp_1', title: 'Tough Skin', desc: 'Max HP +15',
-    rarity: 'common', apply: (u) => { u.bonusHp += 15; },
+    id: 'hp_1', title: 'Tough Skin', desc: 'Max HP +15%',
+    rarity: 'common', apply: (u) => { u.hpMult = (u.hpMult || 1) * 1.15; },
   },
   {
     id: 'blink_range_1', title: 'Long Step', desc: 'Blink distance +30',
@@ -81,8 +81,8 @@ export const UPGRADES = [
     rarity: 'rare', apply: (u) => { u.damage += 12; u.speed = Math.max(100, u.speed - 60); },
   },
   {
-    id: 'adrenaline', title: 'Adrenaline', desc: 'Cooldown -600ms, but Max HP -15',
-    rarity: 'rare', apply: (u) => { u.cooldownReduction += 600; u.bonusHp -= 15; },
+    id: 'adrenaline', title: 'Adrenaline', desc: 'Cooldown -600ms, but Max HP -15%',
+    rarity: 'rare', apply: (u) => { u.cooldownReduction += 600; u.hpMult = (u.hpMult || 1) * 0.85; },
   },
   {
     id: 'big_boi', title: 'Big Boi', desc: 'Fireball size x2, but speed -40',
@@ -104,7 +104,7 @@ export const UPGRADES = [
   },
   {
     id: 'paper_wizard', title: 'Paper Wizard', desc: 'Damage x2, but Max HP halved',
-    rarity: 'epic', apply: (u) => { u.damage *= 2; u.bonusHp -= 50; },
+    rarity: 'epic', apply: (u) => { u.damage *= 2; u.hpMult = (u.hpMult || 1) * 0.5; },
   },
   {
     id: 'blood_magic', title: 'Blood Magic', desc: 'Cooldown -1000ms, but lose 8 HP per cast',
@@ -119,12 +119,12 @@ export const UPGRADES = [
     rarity: 'epic', apply: (u) => { u.damage += 20; u.speed += 100; u.multishot = Math.max(1, u.multishot - 1); },
   },
   {
-    id: 'tank', title: 'Juggernaut', desc: 'Max HP +50, knockback resistance, but speed -30',
-    rarity: 'epic', apply: (u) => { u.bonusHp += 50; u.knockbackResist = (u.knockbackResist || 0) + 0.4; u.speed = Math.max(100, u.speed - 30); },
+    id: 'tank', title: 'Juggernaut', desc: 'Max HP +50%, knockback resistance, but speed -30',
+    rarity: 'epic', apply: (u) => { u.hpMult = (u.hpMult || 1) * 1.5; u.knockbackResist = (u.knockbackResist || 0) + 0.4; u.speed = Math.max(100, u.speed - 30); },
   },
   {
-    id: 'vampiric', title: 'Vampiric Pact', desc: 'Lifesteal +50%, but Max HP -20',
-    rarity: 'epic', apply: (u) => { u.lifesteal += 0.5; u.bonusHp -= 20; },
+    id: 'vampiric', title: 'Vampiric Pact', desc: 'Lifesteal +50%, but Max HP -20%',
+    rarity: 'epic', apply: (u) => { u.lifesteal += 0.5; u.hpMult = (u.hpMult || 1) * 0.8; },
   },
 
   // ============ LEGENDARY (3%) ============
@@ -137,8 +137,8 @@ export const UPGRADES = [
     rarity: 'legendary', apply: (u) => { u.damage += 25; u.selfKnockback += 300; },
   },
   {
-    id: 'death_wish', title: 'Death Wish', desc: 'Damage x3, but Max HP set to 30',
-    rarity: 'legendary', apply: (u) => { u.damage *= 3; u.bonusHp = -(100 - 30); },
+    id: 'death_wish', title: 'Death Wish', desc: 'Damage x3, but Max HP set to 30%',
+    rarity: 'legendary', apply: (u) => { u.damage *= 3; u.hpMult = (u.hpMult || 1) * 0.3; },
   },
   {
     id: 'shotgun', title: 'Shotgun Blast', desc: '+5 projectiles, but range halved',
@@ -427,6 +427,7 @@ export class GameScene extends Phaser.Scene {
             blinkDistance: BLINK_DISTANCE,
             lifesteal: 0,
             bonusHp: 0,
+            hpMult: 1,
             selfKnockback: 0,
           });
         }
@@ -504,6 +505,7 @@ export class GameScene extends Phaser.Scene {
         blinkDistance: BLINK_DISTANCE,
         lifesteal: 0,
         bonusHp: 0,
+        hpMult: 1,
         selfKnockback: 0,
         // New roguelike properties
         castHpCost: 0,
@@ -797,7 +799,8 @@ export class GameScene extends Phaser.Scene {
 
   _handleShopBuyUltimate(peerId, ultId) {
     const sd = this.playerSpellData.get(peerId);
-    if (!sd || sd.ultimateId) return; // Already has an ultimate
+    if (!sd) return;
+    if (sd.ultimateId === ultId) return; // Already equipped
     const def = SPELL_DEFS[ultId];
     if (!def || def.category !== 'ultimate') return;
     const gold = this.goldManager.getGold(peerId);
@@ -1018,15 +1021,22 @@ export class GameScene extends Phaser.Scene {
       const y = cy + Math.sin(angle) * spawnRadius;
       const wizard = new Wizard(this, x, y, player.peerId, player.name, index, player.cosmetics);
       let bonusHp = 0;
+      let hpMult = 1;
       if (this.gameMode === 'arena') {
         const spellData = this.playerSpellData.get(player.peerId);
-        bonusHp = spellData ? spellData.globalUpgrades.bonusHp || 0 : 0;
+        if (spellData) {
+          bonusHp = spellData.globalUpgrades.bonusHp || 0;
+          hpMult = spellData.globalUpgrades.hpMult || 1;
+        }
       } else {
         const upgrades = this.playerUpgrades.get(player.peerId);
-        bonusHp = upgrades ? upgrades.bonusHp || 0 : 0;
+        if (upgrades) {
+          bonusHp = upgrades.bonusHp || 0;
+          hpMult = upgrades.hpMult || 1;
+        }
       }
-      if (bonusHp !== 0) {
-        wizard.maxHealth = Math.max(20, wizard.maxHealth + bonusHp);
+      if (bonusHp !== 0 || hpMult !== 1) {
+        wizard.maxHealth = Math.max(20, Math.round((wizard.maxHealth + bonusHp) * hpMult));
         wizard.health = wizard.maxHealth;
       }
       // Apply arena speed bonus
@@ -1048,10 +1058,11 @@ export class GameScene extends Phaser.Scene {
       this.wizards.set(player.peerId, wizard);
     });
 
-    // Initialize ultimate charges for arena mode
+    // Initialize ultimate charges for arena mode — carry 50% of prior round's charge
     if (this.gameMode === 'arena') {
       this.playerInfo.forEach(p => {
-        this.ultCharges.set(p.peerId, 0);
+        const prior = this.ultCharges.get(p.peerId) || 0;
+        this.ultCharges.set(p.peerId, Math.floor(prior * 0.5));
         this.ultUsedThisRound.set(p.peerId, false);
       });
     }
@@ -2478,10 +2489,14 @@ export class GameScene extends Phaser.Scene {
           // Track last hit for lava kill credit
           wizard.lastHitBy = fb.ownerPlayerId;
 
-          // Charge ultimate meter on damage dealt
+          // Charge ultimate meter on damage dealt (attacker) and taken (victim)
           if (this.gameMode === 'arena' && dealt > 0) {
-            const currentCharge = this.ultCharges.get(fb.ownerPlayerId) || 0;
-            this.ultCharges.set(fb.ownerPlayerId, Math.min(100, currentCharge + dealt * 1.5));
+            const attackerCharge = this.ultCharges.get(fb.ownerPlayerId) || 0;
+            this.ultCharges.set(fb.ownerPlayerId, Math.min(100, attackerCharge + dealt * 2.5));
+            if (wizard.playerId && wizard.playerId !== fb.ownerPlayerId) {
+              const victimCharge = this.ultCharges.get(wizard.playerId) || 0;
+              this.ultCharges.set(wizard.playerId, Math.min(100, victimCharge + dealt * 0.8));
+            }
           }
 
           // Lifesteal (from upgrade + vampire modifier)

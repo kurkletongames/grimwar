@@ -63,15 +63,15 @@ export class LightningBolt {
     if (this.phase === 'indicator') {
       const elapsed = Date.now() - this.spawnTime;
       const progress = Math.min(1, elapsed / this.strikeDelay);
-      const pulse = 0.8 + Math.sin(elapsed * 0.015) * 0.2;
+      const alphaPulse = 0.85 + Math.sin(elapsed * 0.015) * 0.15;
 
-      // Warning circle on ground
-      this.graphics.lineStyle(2, 0xffff44, 0.3 + progress * 0.5);
-      this.graphics.strokeCircle(this.x, this.y, this.strikeRadius * pulse);
+      // Warning circle on ground (fixed size; alpha pulses)
+      this.graphics.lineStyle(2, 0xffff44, (0.3 + progress * 0.5) * alphaPulse);
+      this.graphics.strokeCircle(this.x, this.y, this.strikeRadius);
 
       // Fill getting more intense
-      this.graphics.fillStyle(0xffff44, 0.05 + progress * 0.1);
-      this.graphics.fillCircle(this.x, this.y, this.strikeRadius * pulse);
+      this.graphics.fillStyle(0xffff44, (0.05 + progress * 0.1) * alphaPulse);
+      this.graphics.fillCircle(this.x, this.y, this.strikeRadius);
 
       // Center crosshair
       const cr = 8;

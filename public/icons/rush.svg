@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-linecap="round">
+  <line x1="4" y1="20" x2="24" y2="20" stroke-width="3" stroke-opacity="0.5"/>
+  <line x1="4" y1="44" x2="24" y2="44" stroke-width="3" stroke-opacity="0.5"/>
+  <line x1="10" y1="32" x2="30" y2="32" stroke-width="3" stroke-opacity="0.7"/>
+  <polygon points="30,12 60,32 30,52 40,32" fill="#fff" stroke="none"/>
+</svg>

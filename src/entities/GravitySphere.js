@@ -50,35 +50,35 @@ export class GravitySphere {
   draw() {
     this.graphics.clear();
     const elapsed = Date.now() - this.spawnTime;
-    const lifePct = Math.max(0, 1 - elapsed / this.lifetime);
-    const pulse = 0.85 + Math.sin(this.pulsePhase) * 0.15;
+    const fadeOut = Math.max(0, Math.min(1, (this.lifetime - elapsed) / 500));
+    const alphaPulse = 0.85 + Math.sin(this.pulsePhase) * 0.15;
 
-    // Trail
+    // Trail (per-particle index fade, not lifetime fade)
     this.trail.forEach((p, i) => {
-      const alpha = (i / this.trail.length) * 0.2 * lifePct;
+      const alpha = (i / this.trail.length) * 0.2;
       const size = (i / this.trail.length) * this.radius * 0.6;
-      this.graphics.fillStyle(0x9944ff, alpha);
+      this.graphics.fillStyle(0x9944ff, alpha * fadeOut);
       this.graphics.fillCircle(p.x, p.y, size);
     });
 
-    // Pull radius AoE fill
-    this.graphics.fillStyle(0x6622cc, 0.1 * lifePct);
-    this.graphics.fillCircle(this.x, this.y, this.pullRadius * pulse);
+    // Pull radius AoE fill (fixed size; alpha pulses)
+    this.graphics.fillStyle(0x6622cc, 0.1 * fadeOut * alphaPulse);
+    this.graphics.fillCircle(this.x, this.y, this.pullRadius);
 
     // Outer ring
-    this.graphics.lineStyle(2, 0x9944ff, 0.35 * lifePct);
-    this.graphics.strokeCircle(this.x, this.y, this.pullRadius * pulse);
+    this.graphics.lineStyle(2, 0x9944ff, 0.35 * fadeOut * alphaPulse);
+    this.graphics.strokeCircle(this.x, this.y, this.pullRadius);
 
     // Mid ring
-    this.graphics.lineStyle(1.5, 0x9944ff, 0.25 * lifePct);
-    this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.6 * pulse);
+    this.graphics.lineStyle(1.5, 0x9944ff, 0.25 * fadeOut * alphaPulse);
+    this.graphics.strokeCircle(this.x, this.y, this.pullRadius * 0.6);
 
     // Swirl lines (2 instead of 4 for performance)
     for (let i = 0; i < 2; i++) {
       const angle = this.pulsePhase * 0.8 + i * Math.PI;
-      const outerR = this.pullRadius * 0.7 * pulse;
+      const outerR = this.pullRadius * 0.7;
       const innerR = this.pullRadius * 0.2;
-      this.graphics.lineStyle(1, 0x9944ff, 0.2 * lifePct);
+      this.graphics.lineStyle(1, 0x9944ff, 0.2 * fadeOut);
       this.graphics.beginPath();
       this.graphics.moveTo(
         this.x + Math.cos(angle) * outerR,
@@ -92,11 +92,11 @@ export class GravitySphere {
     }
 
     // Core
-    this.graphics.fillStyle(0x9944ff, 0.8 * lifePct);
+    this.graphics.fillStyle(0x9944ff, 0.8 * fadeOut);
     this.graphics.fillCircle(this.x, this.y, 6);
 
     // Bright center
-    this.graphics.fillStyle(0xcc88ff, lifePct);
+    this.graphics.fillStyle(0xcc88ff, fadeOut);
     this.graphics.fillCircle(this.x, this.y, 3);
   }
 

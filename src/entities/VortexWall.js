@@ -49,11 +49,11 @@ export class VortexWall {
     this.graphics.clear();
 
     const elapsed = Date.now() - this.spawnTime;
-    const lifePct = 1 - elapsed / this.wallDuration;
-    const alpha = Math.max(0.2, lifePct);
-    const pulse = 0.8 + Math.sin(this.pulsePhase) * 0.2;
+    const fadeOut = Math.max(0, Math.min(1, (this.wallDuration - elapsed) / 500));
+    const alphaPulse = 0.85 + Math.sin(this.pulsePhase) * 0.15;
+    const alpha = fadeOut * alphaPulse;
 
-    const halfLen = this.wallLength / 2 * pulse;
+    const halfLen = this.wallLength / 2;
     const x1 = this.x + this.tangentX * halfLen;
     const y1 = this.y + this.tangentY * halfLen;
     const x2 = this.x - this.tangentX * halfLen;

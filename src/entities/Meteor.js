@@ -96,18 +96,17 @@ export class Meteor {
     this.indicatorGraphics.clear();
 
     if (this.phase === 'indicator') {
-      // Pulsing landing circle
       const elapsed = Date.now() - this.spawnTime;
-      const pulse = 0.5 + Math.sin(elapsed * 0.01) * 0.3;
+      const alphaPulse = 0.8 + Math.sin(elapsed * 0.01) * 0.2;
       const progress = Math.min(1, elapsed / LAND_DELAY);
 
-      // AoE range circle
-      this.indicatorGraphics.lineStyle(2, 0xcc2200, 0.3 + progress * 0.4);
-      this.indicatorGraphics.strokeCircle(this.landX, this.landY, this.explosionRadius * pulse);
+      // AoE range circle (fixed size; alpha pulses)
+      this.indicatorGraphics.lineStyle(2, 0xcc2200, (0.3 + progress * 0.4) * alphaPulse);
+      this.indicatorGraphics.strokeCircle(this.landX, this.landY, this.explosionRadius);
 
       // Fill
-      this.indicatorGraphics.fillStyle(0xcc2200, 0.08 + progress * 0.12);
-      this.indicatorGraphics.fillCircle(this.landX, this.landY, this.explosionRadius * pulse);
+      this.indicatorGraphics.fillStyle(0xcc2200, (0.08 + progress * 0.12) * alphaPulse);
+      this.indicatorGraphics.fillCircle(this.landX, this.landY, this.explosionRadius);
 
       // Center crosshair
       this.indicatorGraphics.lineStyle(1, 0xff4400, 0.5 + progress * 0.3);

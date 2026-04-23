@@ -2,7 +2,7 @@ import * as Phaser from 'phaser';
 
 const WIZARD_RADIUS = 18;
 const WIZARD_SPEED = 85;
-const MAX_HEALTH = 100;
+const MAX_HEALTH = 150;
 const FRICTION = 0.98; // High value = knockback carries far (Smash-style)
 const FRICTION_THRESHOLD = 5; // Min velocity before knockback stops
 const COOLDOWN_RING_RADIUS = 24;

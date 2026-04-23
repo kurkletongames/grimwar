@@ -78,8 +78,7 @@ export class Tether {
       // Tethered — draw beam between caster and target
       if (this._casterPos && this._targetPos) {
         const elapsed = Date.now() - this.tetherStartTime;
-        const lifePct = Math.max(0, 1 - elapsed / this.tetherDuration);
-        const alpha = Math.max(0.3, lifePct);
+        const alpha = Math.max(0, Math.min(1, (this.tetherDuration - elapsed) / 500));
 
         const beamDx = this._targetPos.x - this._casterPos.x;
         const beamDy = this._targetPos.y - this._casterPos.y;

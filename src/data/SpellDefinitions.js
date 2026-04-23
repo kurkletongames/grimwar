@@ -383,7 +383,7 @@ export const ULTIMATE_IDS = ['supernova', 'meteor_storm', 'arcane_barrage', 'bla
 
 /** Global (non-spell) upgrades available in arena shop */
 export const GLOBAL_UPGRADES = [
-  { id: 'shop_hp', title: 'Fortify', desc: 'Max HP +15', price: 75, apply: (g) => { g.bonusHp += 15; } },
+  { id: 'shop_hp', title: 'Fortify', desc: 'Max HP +25%', price: 75, priceIncrease: 25, apply: (g) => { g.hpMult = (g.hpMult || 1) * 1.25; } },
   { id: 'shop_speed', title: 'Swift Feet', desc: 'Movement speed +12 (cost +25 each buy)', price: 75, priceIncrease: 25, apply: (g) => { g.bonusSpeed = (g.bonusSpeed || 0) + 12; } },
 ];
 
@@ -403,5 +403,5 @@ export function createBaseBlinkStats(blinkId) {
 
 /** Create a fresh global upgrades object */
 export function createBaseGlobalUpgrades() {
-  return { bonusHp: 0, bonusSpeed: 0 };
+  return { bonusHp: 0, hpMult: 1, bonusSpeed: 0 };
 }

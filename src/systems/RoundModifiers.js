@@ -31,10 +31,10 @@ export const MODIFIERS = [
   {
     id: 'glass_round',
     name: 'Glass Round',
-    desc: 'Everyone starts with 50 HP.',
+    desc: 'Everyone starts with 75 HP.',
     color: 0xff4444,
     icon: '💔',
-    maxHpOverride: 50,
+    maxHpOverride: 75,
   },
   {
     id: 'sudden_death',

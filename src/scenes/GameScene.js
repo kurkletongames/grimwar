@@ -3107,7 +3107,7 @@ export class GameScene extends Phaser.Scene {
             if (this.roundOver) return;
             this._drawUltVfx(mx, my, 'meteor_strike', 0xff4400);
             this.wizards.forEach(w => {
-              if (!w.alive) return;
+              if (!w.alive || w.playerId === playerId) return;
               const ddx = w.x - mx;
               const ddy = w.y - my;
               const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
@@ -3158,7 +3158,7 @@ export class GameScene extends Phaser.Scene {
           const tid = setTimeout(() => {
             if (this.roundOver) return;
             this.wizards.forEach(w => {
-              if (!w.alive) return;
+              if (!w.alive || w.playerId === playerId) return;
               const ddx = bhX - w.x;
               const ddy = bhY - w.y;
               const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;

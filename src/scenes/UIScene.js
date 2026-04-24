@@ -92,7 +92,7 @@ export class UIScene extends Phaser.Scene {
       this.upgradePanel.setVisible(this.upgradePanelVisible);
     });
 
-    this.add.text(w - 10, 10, '[TAB] Upgrades  [ESC] Menu', {
+    this._hintText = this.add.text(w - 10, 10, '[TAB] Upgrades  [ESC] Menu', {
       fontSize: '11px', color: '#555',
     }).setOrigin(1, 0).setDepth(20);
 
@@ -341,12 +341,16 @@ export class UIScene extends Phaser.Scene {
     };
     gameScene.events.on('bounty-update', this._onBountyUpdate);
 
+    // Reposition HUD elements when the canvas resizes
+    this.scale.on('resize', this._applyHudLayout, this);
+
     // Clean up listeners and timers on shutdown
     this.events.on('shutdown', () => {
       if (this._shopTimerEvent) { this._shopTimerEvent.remove(); this._shopTimerEvent = null; }
       this._slotCooldownGraphics = [];
       this._killFeedTexts.forEach((t) => t.destroy());
       this._killFeedTexts = [];
+      this.scale.off('resize', this._applyHudLayout, this);
       gameScene.events.off('game-started', this._onGameStarted);
       gameScene.events.off('round-start', this._onRoundStart);
       gameScene.events.off('countdown', this._onCountdown);
@@ -366,6 +370,38 @@ export class UIScene extends Phaser.Scene {
       gameScene.events.off('player-kill', this._onPlayerKill);
       gameScene.events.off('bounty-update', this._onBountyUpdate);
     });
+  }
+
+  // Reposition HUD elements that were anchored to the viewport at create()
+  // time. Modal panels (shop, esc, upgrades, game over, modifier vote) are
+  // rebuilt on each show event, so only their container position needs to
+  // track the viewport — contents inside the container are drawn relative
+  // to (0,0) and ride along for free.
+  _applyHudLayout() {
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+
+    if (this.roundText) this.roundText.setPosition(w / 2, 22);
+    if (this.countdownText) this.countdownText.setPosition(w / 2, h / 2);
+    if (this.roundOverText) this.roundOverText.setPosition(w / 2, h / 2 - 50);
+    if (this._hintText) this._hintText.setPosition(w - 10, 10);
+    if (this.goldText) this.goldText.setPosition(w - 10, 30);
+    if (this.escMenuContainer) this.escMenuContainer.setPosition(w / 2, h / 2);
+    if (this.gameOverContainer) this.gameOverContainer.setPosition(w / 2, h / 2);
+    if (this.powerUpContainer) this.powerUpContainer.setPosition(w / 2, h / 2);
+    if (this.shopContainer) this.shopContainer.setPosition(w / 2, h / 2);
+    if (this.swapConfirmContainer) this.swapConfirmContainer.setPosition(w / 2, h / 2);
+    if (this.spellSlotsContainer) this.spellSlotsContainer.setPosition(w / 2, h - 50);
+
+    if (this._killFeedTexts) {
+      this._killFeedTexts.forEach((t, i) => t.setPosition(w - 15, 50 + i * 16));
+    }
+
+    // Rebuild any modal currently on screen so its dim-bg fills the new size
+    // and its content re-anchors. Cheap because rebuild is what a show-event
+    // would do anyway.
+    if (this.upgradePanelVisible) this._buildUpgradePanel();
+    if (this.escMenuVisible) this._buildEscMenu();
   }
 
   // ---- Scoreboard ----

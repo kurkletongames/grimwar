@@ -38,8 +38,9 @@ export class LobbyManager {
     // Character editor toggle + preview
     document.getElementById('btn-customize').addEventListener('click', () => {
       const section = document.getElementById('customize-section');
-      section.style.display = section.style.display === 'none' ? 'block' : 'none';
-      if (section.style.display !== 'none') this._drawPreview();
+      const isHidden = getComputedStyle(section).display === 'none';
+      section.style.display = isHidden ? 'block' : 'none';
+      if (isHidden) this._drawPreview();
     });
 
     // Update preview when any cosmetic dropdown changes
@@ -55,20 +56,16 @@ export class LobbyManager {
 
     btnRoguelike.addEventListener('click', () => {
       this.gameMode = 'roguelike';
-      btnRoguelike.style.background = '#e94560';
-      btnRoguelike.style.color = '#fff';
-      btnArena.style.background = 'transparent';
-      btnArena.style.color = '#e94560';
-      modeDesc.textContent = 'Earn upgrades between rounds — losers choose a powerup';
+      btnRoguelike.classList.add('active');
+      btnArena.classList.remove('active');
+      if (modeDesc) modeDesc.textContent = '';
     });
 
     btnArena.addEventListener('click', () => {
       this.gameMode = 'arena';
-      btnArena.style.background = '#e94560';
-      btnArena.style.color = '#fff';
-      btnRoguelike.style.background = 'transparent';
-      btnRoguelike.style.color = '#e94560';
-      modeDesc.textContent = 'Buy spells and upgrades from the shop between rounds';
+      btnArena.classList.add('active');
+      btnRoguelike.classList.remove('active');
+      if (modeDesc) modeDesc.textContent = '';
     });
 
     // Allow enter key in join code input
@@ -160,14 +157,25 @@ export class LobbyManager {
     ];
 
     this.lobby.classList.add('hidden');
+    this._hideBackdrop();
     if (this.onGameStart) {
       this.onGameStart({ type: 'game-start', players, testMode: true, gameMode: this.gameMode });
     }
   }
 
+  _hideBackdrop() {
+    const bg = document.getElementById('lobby-bg');
+    if (bg) bg.style.display = 'none';
+  }
+
+  _showBackdrop() {
+    const bg = document.getElementById('lobby-bg');
+    if (bg) bg.style.display = '';
+  }
+
   _onBack() {
     this.joinSection.style.display = 'none';
-    this.lobbyMenu.style.display = 'block';
+    this.lobbyMenu.style.display = '';
     this.lobbyStatus.textContent = '';
   }
 
@@ -187,6 +195,7 @@ export class LobbyManager {
 
     network.onGameStart = (data) => {
       this.lobby.classList.add('hidden');
+      this._hideBackdrop();
       const pageContent = document.getElementById('page-content');
       if (pageContent) pageContent.style.display = 'none';
       if (this.onGameStart) this.onGameStart(data);
@@ -391,5 +400,6 @@ export class LobbyManager {
 
   show() {
     this.lobby.classList.remove('hidden');
+    this._showBackdrop();
   }
 }

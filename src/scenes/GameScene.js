@@ -32,6 +32,13 @@ const BLINK_DISTANCE = 120;
 const BLINK_COOLDOWN = 12000; // ms
 const SPELL_GCD = 250; // ms — global cooldown between any two spell casts (blink exempt)
 
+// Fixed design-space arena center. Camera zooms/centers on this so every
+// player sees the full 1280x960 playfield regardless of their viewport.
+const DESIGN_WIDTH = 1280;
+const DESIGN_HEIGHT = 960;
+export const ARENA_CENTER_X = DESIGN_WIDTH / 2;
+export const ARENA_CENTER_Y = DESIGN_HEIGHT / 2;
+
 // Rarity: common (60%), rare (25%), epic (12%), legendary (3%)
 const RARITY = {
   common:    { label: 'Common',    color: 0x888888, weight: 60 },
@@ -103,7 +110,7 @@ export const UPGRADES = [
     rarity: 'epic', apply: (u) => { u.multishot += 2; },
   },
   {
-    id: 'paper_wizard', title: 'Paper Wizard', desc: 'Damage x2, but Max HP halved',
+    id: 'paper_wizard', title: 'Paper Wizard', desc: 'Damage x2, but Max HP -50%',
     rarity: 'epic', apply: (u) => { u.damage *= 2; u.hpMult = (u.hpMult || 1) * 0.5; },
   },
   {
@@ -137,7 +144,7 @@ export const UPGRADES = [
     rarity: 'legendary', apply: (u) => { u.damage += 25; u.selfKnockback += 300; },
   },
   {
-    id: 'death_wish', title: 'Death Wish', desc: 'Damage x3, but Max HP set to 30%',
+    id: 'death_wish', title: 'Death Wish', desc: 'Damage x3, but Max HP -70%',
     rarity: 'legendary', apply: (u) => { u.damage *= 3; u.hpMult = (u.hpMult || 1) * 0.3; },
   },
   {
@@ -172,6 +179,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   create() {
+    this._applyCameraLayout();
+    this.scale.on('resize', this._applyCameraLayout, this);
+    this.events.once('shutdown', () => this.scale.off('resize', this._applyCameraLayout, this));
+
     this.arena = null;
     this.wizards = new Map();
     this.fireballs = [];
@@ -397,6 +408,19 @@ export class GameScene extends Phaser.Scene {
       network.onShopReadyUpdate = null;
       network.onPlayerReconnected = null;
     });
+  }
+
+  // Zoom the camera so the 1280x960 design area always fits the viewport,
+  // and scroll so the arena stays centered on screen. Called on scene create
+  // and whenever the canvas resizes.
+  _applyCameraLayout() {
+    const cam = this.cameras.main;
+    if (!cam) return;
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const zoom = Math.min(w / DESIGN_WIDTH, h / DESIGN_HEIGHT, 1);
+    cam.setZoom(zoom);
+    cam.centerOn(ARENA_CENTER_X, ARENA_CENTER_Y);
   }
 
   _startGame(data) {
@@ -988,9 +1012,10 @@ export class GameScene extends Phaser.Scene {
     this.wizards.forEach((w) => w.destroy());
     this.wizards.clear();
 
-    // Create/reset arena
-    const cx = this.cameras.main.width / 2;
-    const cy = this.cameras.main.height / 2;
+    // Create/reset arena at fixed design-space coords so all players
+    // (regardless of viewport) share the same arena geometry.
+    const cx = ARENA_CENTER_X;
+    const cy = ARENA_CENTER_Y;
     if (this.arena) this.arena.destroy();
     this.arena = new Arena(this, cx, cy);
     // Deterministic theme based on round number (same on host + all clients)

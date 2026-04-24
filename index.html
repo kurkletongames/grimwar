@@ -29,167 +29,535 @@
   </script>
   <title>GrimWar</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <!-- Google AdSense -->
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1411251953532308" crossorigin="anonymous"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
     body {
-      background: #1a1a2e;
-      display: flex;
-      justify-content: center;
-      align-items: center;
+      background: #07070f;
       min-height: 100vh;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       overflow: hidden;
+      color: #e0e0e0;
     }
-    #game-container { position: relative; }
+    #game-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 10;
+    }
 
-    /* Lobby overlay */
+    /* ===== Background layer ===== */
+    #lobby-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      pointer-events: none;
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse at 20% 15%, rgba(171, 71, 188, 0.18), transparent 55%),
+        radial-gradient(ellipse at 80% 85%, rgba(233, 69, 96, 0.18), transparent 55%),
+        radial-gradient(ellipse at 50% 50%, rgba(79, 195, 247, 0.08), transparent 60%),
+        linear-gradient(180deg, #0a0a1e 0%, #0a0e1f 50%, #0b0820 100%);
+    }
+    /* Hide decorative background once the lobby closes so it can't cover the game */
+    body:has(#lobby.hidden) #lobby-bg { display: none; }
+    #lobby-bg::before {
+      content: '';
+      position: absolute;
+      inset: -100px;
+      background:
+        radial-gradient(circle at 25% 30%, rgba(255, 255, 255, 0.025), transparent 1.5px),
+        radial-gradient(circle at 70% 60%, rgba(255, 255, 255, 0.02), transparent 1px),
+        radial-gradient(circle at 40% 80%, rgba(255, 255, 255, 0.03), transparent 1px),
+        radial-gradient(circle at 85% 20%, rgba(255, 255, 255, 0.02), transparent 1px);
+      background-size: 140px 140px, 220px 220px, 180px 180px, 260px 260px;
+      opacity: 0.8;
+    }
+    #lobby-bg .orb {
+      position: absolute;
+      width: 56px; height: 56px;
+      opacity: 0.08;
+      filter: drop-shadow(0 0 18px currentColor);
+      animation: drift 28s linear infinite;
+    }
+    @keyframes drift {
+      0%   { transform: translate(0, 0) rotate(0deg); }
+      50%  { transform: translate(40px, -30px) rotate(180deg); }
+      100% { transform: translate(0, 0) rotate(360deg); }
+    }
+
+    /* ===== Lobby overlay ===== */
     #lobby {
       position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(10, 10, 30, 0.95);
+      inset: 0;
+      z-index: 100;
       display: flex;
       justify-content: center;
       align-items: center;
-      z-index: 100;
-      color: #e0e0e0;
+      padding: 20px;
     }
     #lobby.hidden { display: none; }
+
     .lobby-panel {
-      background: #16213e;
-      border: 2px solid #e94560;
-      border-radius: 12px;
-      padding: 40px;
+      background: linear-gradient(165deg, rgba(22, 33, 62, 0.96), rgba(14, 18, 36, 0.96));
+      border: 1px solid rgba(233, 69, 96, 0.35);
+      border-radius: 16px;
+      padding: 32px 36px 24px;
+      width: 720px;
+      max-width: 95vw;
       text-align: center;
-      min-width: 400px;
+      box-shadow:
+        0 30px 80px rgba(0, 0, 0, 0.6),
+        0 0 60px rgba(233, 69, 96, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
-    .lobby-panel h1 {
-      color: #e94560;
-      font-size: 2.5em;
-      margin-bottom: 8px;
-      text-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
-    }
-    .lobby-panel .subtitle {
-      color: #888;
-      margin-bottom: 30px;
-      font-size: 0.9em;
-    }
-    .lobby-panel input {
-      background: #0f3460;
-      border: 1px solid #e94560;
+
+    /* ===== Header ===== */
+    .header { position: relative; margin-bottom: 22px; }
+    .header h1 {
       color: #fff;
-      padding: 12px 16px;
+      font-size: 3.2em;
+      font-weight: 900;
+      letter-spacing: 6px;
+      margin-bottom: 4px;
+      background: linear-gradient(180deg, #fff 0%, #ffb3c1 50%, #e94560 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 22px rgba(233, 69, 96, 0.35));
+    }
+    .header .subtitle {
+      color: #9aa3c8;
+      font-size: 0.95em;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    .header-icons {
+      position: absolute;
+      top: 18px;
+      display: flex;
+      gap: 14px;
+      opacity: 0.55;
+    }
+    .header-icons.left  { left: 0; }
+    .header-icons.right { right: 0; }
+    .header-icons img { width: 26px; height: 26px; filter: drop-shadow(0 0 6px currentColor); }
+    .header-icons .i-fire   { color: #ff6a00; filter: hue-rotate(0) drop-shadow(0 0 8px #ff6a00); }
+    .header-icons .i-ice    { filter: drop-shadow(0 0 8px #4fc3f7); }
+    .header-icons .i-volt   { filter: drop-shadow(0 0 8px #ffdd44); }
+    .header-icons .i-void   { filter: drop-shadow(0 0 8px #9944ff); }
+
+    /* ===== Identity row (preview + name) ===== */
+    .identity-row {
+      display: grid;
+      grid-template-columns: 168px 1fr;
+      gap: 20px;
+      align-items: center;
+      margin: 20px 0 24px;
+      text-align: left;
+    }
+    .preview-frame {
+      position: relative;
+      width: 168px;
+      height: 168px;
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at center, rgba(79, 195, 247, 0.18), transparent 65%),
+        linear-gradient(160deg, #0c1630, #07091a);
+      border: 1px solid rgba(79, 195, 247, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 30px rgba(79, 195, 247, 0.08) inset;
+    }
+    .preview-frame canvas {
+      width: 140px; height: 140px;
+      background: transparent;
+      border: 0;
+    }
+    .preview-label {
+      position: absolute;
+      top: 8px; left: 12px;
+      font-size: 0.65em;
+      letter-spacing: 2px;
+      color: #6a7bb3;
+      text-transform: uppercase;
+    }
+    .identity-col label {
+      font-size: 0.7em;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #6a7bb3;
+      display: block;
+      margin-bottom: 6px;
+    }
+    #name-input {
+      background: #0a1330;
+      border: 1px solid rgba(233, 69, 96, 0.45);
+      color: #fff;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 1.2em;
+      width: 100%;
+      letter-spacing: normal;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    #name-input::placeholder { color: #445075; letter-spacing: normal; }
+    #name-input:focus {
+      border-color: #e94560;
+      box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.12);
+    }
+    .identity-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .ghost-btn {
+      background: transparent;
+      border: 1px solid rgba(79, 195, 247, 0.45);
+      color: #4fc3f7;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 0.82em;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: background .15s, border-color .15s;
+    }
+    .ghost-btn:hover {
+      background: rgba(79, 195, 247, 0.08);
+      border-color: #4fc3f7;
+    }
+
+    /* ===== Cosmetics editor ===== */
+    #customize-section {
+      display: none;
+      margin-bottom: 22px;
+      padding: 18px;
+      background: rgba(10, 16, 38, 0.65);
+      border: 1px solid rgba(79, 195, 247, 0.18);
+      border-radius: 12px;
+      text-align: left;
+    }
+    .cosmetics-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+    .cos-cell {
+      background: rgba(15, 52, 96, 0.45);
+      border: 1px solid rgba(233, 69, 96, 0.25);
+      border-radius: 8px;
+      padding: 8px 10px;
+      transition: border-color .15s, background .15s;
+    }
+    .cos-cell:hover { border-color: rgba(233, 69, 96, 0.6); background: rgba(15, 52, 96, 0.8); }
+    .cos-cell label {
+      display: block;
+      font-size: 0.66em;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #8a97c0;
+      margin-bottom: 5px;
+    }
+    .cos-cell select {
+      width: 100%;
+      background: transparent;
+      color: #fff;
+      border: 0;
+      padding: 2px 0;
+      font-size: 0.9em;
+      cursor: pointer;
+      outline: none;
+    }
+    .cos-cell select option { background: #0f1a2e; color: #fff; }
+
+    /* ===== Mode selector (as tabs/cards) ===== */
+    .mode-section { margin-bottom: 22px; }
+    .mode-label {
+      font-size: 0.7em;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #6a7bb3;
+      margin-bottom: 8px;
+    }
+    #mode-selector {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 0 0 8px;
+    }
+    .mode-btn {
+      padding: 14px 16px;
+      background: rgba(15, 52, 96, 0.4);
+      border: 1px solid rgba(233, 69, 96, 0.3);
+      color: #9aa3c8;
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: left;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .mode-btn:hover { background: rgba(15, 52, 96, 0.7); border-color: rgba(233, 69, 96, 0.55); }
+    .mode-btn .mode-name {
+      display: block;
+      font-size: 1.05em;
+      font-weight: 700;
+      letter-spacing: 2px;
+      margin-bottom: 2px;
+      color: #fff;
+    }
+    .mode-btn .mode-tag {
+      display: block;
+      font-size: 0.78em;
+      color: #8a97c0;
+      letter-spacing: 0.5px;
+    }
+    .mode-btn.active {
+      background: linear-gradient(160deg, rgba(233, 69, 96, 0.22), rgba(233, 69, 96, 0.1));
+      border-color: #e94560;
+      box-shadow: 0 0 0 1px rgba(233, 69, 96, 0.45), 0 10px 30px rgba(233, 69, 96, 0.15);
+    }
+    .mode-btn.active .mode-name { color: #fff; }
+    .mode-btn.active .mode-tag { color: #ffb3c1; }
+    #mode-description { display: none; }
+
+    /* ===== Action cards ===== */
+    .action-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+    .action-card {
+      background: linear-gradient(160deg, rgba(15, 52, 96, 0.55), rgba(10, 16, 38, 0.55));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 18px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform .15s, border-color .15s, background .15s;
+    }
+    .action-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(233, 69, 96, 0.55);
+      background: linear-gradient(160deg, rgba(25, 68, 120, 0.65), rgba(15, 22, 50, 0.65));
+    }
+    .action-card .ac-title {
+      font-size: 1.3em;
+      font-weight: 800;
+      letter-spacing: 3px;
+      margin-bottom: 4px;
+      color: #fff;
+    }
+    .action-card .ac-desc {
+      font-size: 0.78em;
+      color: #8a97c0;
+      margin-bottom: 12px;
+      min-height: 2.2em;
+      line-height: 1.2em;
+    }
+    .action-card button {
+      background: #e94560;
+      color: #fff;
+      border: none;
+      padding: 10px 22px;
+      border-radius: 6px;
+      font-size: 0.95em;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: background .15s;
+    }
+    .action-card button:hover { background: #ff5673; }
+    .action-card.solo button { background: #4fc3f7; color: #07101e; }
+    .action-card.solo button:hover { background: #6fd4ff; }
+
+    /* Solo wizard icon */
+    .ac-icon {
+      width: 36px; height: 36px;
+      margin-bottom: 6px;
+      opacity: 0.9;
+      filter: drop-shadow(0 0 10px currentColor);
+    }
+    .solo    .ac-icon { color: #4fc3f7; }
+    .host    .ac-icon { color: #e94560; }
+    .join    .ac-icon { color: #ff8844; }
+
+    /* ===== Join / Host / Client sections ===== */
+    #join-section, #host-section, #client-section {
+      display: none;
+      margin-top: 18px;
+    }
+    #join-section input {
+      background: #0a1330;
+      border: 1px solid rgba(233, 69, 96, 0.45);
+      color: #fff;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 1.2em;
+      width: 100%;
+      margin-bottom: 10px;
+      text-align: center;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      outline: none;
+    }
+    #join-section input:focus {
+      border-color: #e94560;
+      box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.15);
+    }
+    .flex-btns { display: flex; gap: 8px; justify-content: center; }
+    .primary-btn {
+      background: #e94560;
+      color: #fff;
+      border: none;
+      padding: 12px 28px;
       border-radius: 6px;
       font-size: 1em;
-      width: 100%;
-      margin-bottom: 12px;
-      text-align: center;
-      letter-spacing: 2px;
+      cursor: pointer;
+      letter-spacing: 1px;
+      font-weight: 600;
+      transition: background .15s;
     }
-    .lobby-panel input::placeholder {
-      color: #666;
-      letter-spacing: normal;
-    }
-    .lobby-panel button:not(.mode-btn) {
-      background: #e94560;
-      color: white;
-      border: none;
-      padding: 12px 32px;
+    .primary-btn:hover { background: #ff5673; }
+    .primary-btn:disabled { background: #3a3a4a; color: #777; cursor: not-allowed; }
+    .secondary-btn {
+      background: transparent;
+      color: #9aa3c8;
+      border: 1px solid #3a4265;
+      padding: 12px 20px;
       border-radius: 6px;
-      font-size: 1.1em;
-      cursor: pointer;
-      margin: 6px;
-      transition: background 0.2s;
-    }
-    .lobby-panel button:not(.mode-btn):hover { background: #c73652; }
-    .lobby-panel button:not(.mode-btn):disabled {
-      background: #555;
-      cursor: not-allowed;
-    }
-    /* Mode toggle buttons */
-    .mode-btn {
-      padding: 10px 20px;
       font-size: 0.9em;
-      min-width: 120px;
       cursor: pointer;
-      border: 2px solid #e94560;
-      transition: background 0.2s, color 0.2s;
-      margin: 0;
+      transition: background .15s, border-color .15s;
     }
-    .mode-btn:hover {
-      filter: brightness(1.15);
-    }
-    #btn-mode-roguelike {
-      border-radius: 6px 0 0 6px;
-    }
-    #btn-mode-arena {
-      border-radius: 0 6px 6px 0;
-      border-left: none;
-    }
-    #lobby-status {
-      margin-top: 16px;
-      min-height: 24px;
-      color: #aaa;
-      font-size: 0.9em;
+    .secondary-btn:hover { background: rgba(58, 66, 101, 0.3); border-color: #5a6285; }
+
+    /* Host waiting room */
+    #host-section .code-label {
+      font-size: 0.72em;
+      color: #6a7bb3;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
     }
     #game-code-display {
-      font-size: 2em;
-      color: #e94560;
-      letter-spacing: 4px;
-      margin: 12px 0;
-      font-weight: bold;
+      font-size: 2.4em;
+      color: #fff;
+      letter-spacing: 10px;
+      margin-bottom: 16px;
+      padding: 14px 20px;
+      background: rgba(10, 16, 38, 0.7);
+      border: 1px dashed rgba(233, 69, 96, 0.5);
+      border-radius: 10px;
+      font-weight: 900;
+      font-family: 'Courier New', monospace;
     }
-    #player-list {
+    #player-list, #client-player-list {
       text-align: left;
-      margin: 16px 0;
+      margin: 14px 0 18px;
       padding: 0;
       list-style: none;
     }
-    #player-list li {
-      padding: 6px 12px;
-      background: #0f3460;
-      margin: 4px 0;
-      border-radius: 4px;
+    #player-list li, #client-player-list li {
+      padding: 10px 14px;
+      background: rgba(15, 52, 96, 0.5);
+      margin: 5px 0;
+      border-radius: 6px;
       font-size: 0.95em;
+      border-left: 3px solid #4fc3f7;
     }
-    #player-list li .host-badge {
+    #player-list li .host-badge, #client-player-list li .host-badge {
       color: #e94560;
-      font-size: 0.8em;
-      margin-left: 8px;
+      font-size: 0.75em;
+      margin-left: 10px;
+      font-weight: bold;
+      letter-spacing: 1px;
     }
-    .lobby-section { margin: 16px 0; }
 
-    /* Name input */
-    #name-input {
-      letter-spacing: normal !important;
+    #lobby-status {
+      margin-top: 14px;
+      min-height: 22px;
+      color: #6a7bb3;
+      font-size: 0.85em;
+      letter-spacing: 0.5px;
     }
+
+    /* ===== Footer links ===== */
+    .footer {
+      margin-top: 18px;
+      font-size: 0.8em;
+      color: #4a557a;
+    }
+    .footer a {
+      color: #6a7bb3;
+      text-decoration: none;
+      margin: 0 10px;
+      transition: color .15s;
+    }
+    .footer a:hover { color: #4fc3f7; }
   </style>
 </head>
 <body>
   <div id="game-container"></div>
 
+  <!-- Decorative animated background -->
+  <div id="lobby-bg">
+    <img class="orb" src="/icons/fireball.svg"       style="top:8%;  left:6%;  color:#ff6a00; animation-duration:32s;" />
+    <img class="orb" src="/icons/lightning_bolt.svg" style="top:14%; right:8%; color:#ffdd44; animation-duration:26s; animation-delay:-5s;" />
+    <img class="orb" src="/icons/gravity_sphere.svg" style="bottom:14%; left:10%; color:#9944ff; animation-duration:30s; animation-delay:-12s;" />
+    <img class="orb" src="/icons/meteor.svg"         style="bottom:8%;  right:14%; color:#cc2200; animation-duration:34s; animation-delay:-8s;" />
+    <img class="orb" src="/icons/vortex_wall.svg"    style="top:48%;   left:3%;   color:#44ffcc; animation-duration:38s; animation-delay:-20s;" />
+    <img class="orb" src="/icons/black_hole.svg"     style="top:40%;   right:4%;  color:#9944ff; animation-duration:36s; animation-delay:-2s;" />
+  </div>
+
   <!-- Lobby UI -->
   <div id="lobby">
     <div class="lobby-panel">
-      <h1>GrimWar</h1>
-      <p class="subtitle">Wizard Arena Combat</p>
 
-      <div class="lobby-section">
-        <input type="text" id="name-input" placeholder="Enter your wizard name" maxlength="16" />
-        <button id="btn-customize" style="background:#0f3460; border:1px solid #4fc3f7; color:#4fc3f7; padding:6px 16px; border-radius:4px; font-size:0.8em; cursor:pointer; margin-top:6px;">Customize Wizard</button>
+      <!-- Header -->
+      <div class="header">
+        <div class="header-icons left">
+          <img class="i-fire" src="/icons/fireball.svg" />
+          <img class="i-volt" src="/icons/lightning_bolt.svg" />
+          <img class="i-ice"  src="/icons/default_blink.svg" />
+        </div>
+        <div class="header-icons right">
+          <img class="i-void" src="/icons/black_hole.svg" />
+          <img class="i-ice"  src="/icons/vortex_wall.svg" />
+          <img class="i-fire" src="/icons/meteor.svg" />
+        </div>
+        <h1>GRIMWAR</h1>
+        <p class="subtitle">Wizard Arena Combat</p>
       </div>
 
-      <!-- Character editor (hidden initially) -->
-      <div id="customize-section" style="display:none; margin:12px 0; text-align:left; max-width:400px; margin-left:auto; margin-right:auto;">
-        <!-- Preview canvas -->
-        <div style="text-align:center; margin-bottom:10px;">
-          <canvas id="wizard-preview" width="120" height="120" style="background:#1a1a2e; border:1px solid #333; border-radius:8px;"></canvas>
+      <!-- Identity row: preview + name -->
+      <div class="identity-row">
+        <div class="preview-frame">
+          <span class="preview-label">YOU</span>
+          <canvas id="wizard-preview" width="140" height="140"></canvas>
         </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-          <div>
-            <label style="color:#888; font-size:0.75em;">Hat</label>
-            <select id="cosmetic-hat" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+        <div class="identity-col">
+          <label>Wizard Name</label>
+          <input type="text" id="name-input" placeholder="Enter your wizard name" maxlength="16" />
+          <div class="identity-actions">
+            <button id="btn-customize" class="ghost-btn">Customize</button>
+            <button id="btn-randomize" class="ghost-btn" title="Shuffle cosmetics">Randomize</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cosmetics editor (hidden by default) -->
+      <div id="customize-section">
+        <div class="cosmetics-grid">
+          <div class="cos-cell">
+            <label>Hat</label>
+            <select id="cosmetic-hat">
               <option value="classic">Classic Wizard</option>
               <option value="crown">Crown</option>
               <option value="horns">Horns</option>
@@ -204,9 +572,9 @@
               <option value="none">No Hat</option>
             </select>
           </div>
-          <div>
-            <label style="color:#888; font-size:0.75em;">Eyes</label>
-            <select id="cosmetic-eyes" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+          <div class="cos-cell">
+            <label>Eyes</label>
+            <select id="cosmetic-eyes">
               <option value="normal">Normal</option>
               <option value="angry">Angry</option>
               <option value="cyclops">Cyclops</option>
@@ -218,9 +586,9 @@
               <option value="wide">Wide</option>
             </select>
           </div>
-          <div>
-            <label style="color:#888; font-size:0.75em;">Mouth</label>
-            <select id="cosmetic-mouth" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+          <div class="cos-cell">
+            <label>Mouth</label>
+            <select id="cosmetic-mouth">
               <option value="none">None</option>
               <option value="smile">Smile</option>
               <option value="grin">Grin</option>
@@ -230,9 +598,9 @@
               <option value="mustache">Mustache</option>
             </select>
           </div>
-          <div>
-            <label style="color:#888; font-size:0.75em;">Trail</label>
-            <select id="cosmetic-trail" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+          <div class="cos-cell">
+            <label>Trail</label>
+            <select id="cosmetic-trail">
               <option value="none">None</option>
               <option value="fire">Fire</option>
               <option value="ice">Ice</option>
@@ -245,9 +613,9 @@
               <option value="void">Void</option>
             </select>
           </div>
-          <div>
-            <label style="color:#888; font-size:0.75em;">Aura</label>
-            <select id="cosmetic-aura" style="width:100%; background:#0f3460; color:#fff; border:1px solid #e94560; padding:5px; border-radius:4px; font-size:0.85em;">
+          <div class="cos-cell">
+            <label>Aura</label>
+            <select id="cosmetic-aura">
               <option value="none">None</option>
               <option value="flame">Flame</option>
               <option value="frost">Frost</option>
@@ -261,50 +629,112 @@
       </div>
 
       <!-- Mode selection -->
-      <div id="mode-selector" style="margin:0 0 12px 0; display:flex; gap:0; justify-content:center;">
-        <button id="btn-mode-roguelike" class="mode-btn" style="background:#e94560; color:#fff;">Roguelike</button>
-        <button id="btn-mode-arena" class="mode-btn" style="background:transparent; color:#e94560;">Arena</button>
+      <div class="mode-section">
+        <div class="mode-label">Game Mode</div>
+        <div id="mode-selector">
+          <button id="btn-mode-roguelike" class="mode-btn active">
+            <span class="mode-name">ROGUELIKE</span>
+            <span class="mode-tag">Pick a power-up when you lose a round</span>
+          </button>
+          <button id="btn-mode-arena" class="mode-btn">
+            <span class="mode-name">ARENA</span>
+            <span class="mode-tag">Earn gold, buy spells and ultimates</span>
+          </button>
+        </div>
+        <p id="mode-description"></p>
       </div>
-      <p id="mode-description" style="color:#666; font-size:0.8em; margin-bottom:16px; min-height:2.4em; line-height:1.2em;">
-        Earn upgrades between rounds — losers choose a powerup
-      </p>
 
-      <!-- Initial buttons -->
-      <div id="lobby-menu">
-        <button id="btn-host">Host Game</button>
-        <button id="btn-join">Join Game</button>
-        <br/>
-        <button id="btn-test" style="background:#0f3460; margin-top:12px; font-size:0.9em;">Test Mode (Solo + Bots)</button>
+      <!-- Action cards -->
+      <div id="lobby-menu" class="action-grid">
+        <div class="action-card solo">
+          <img class="ac-icon" src="/icons/homing_missile.svg" />
+          <span class="ac-title">SOLO</span>
+          <span class="ac-desc">Play against 3 bots</span>
+          <button id="btn-test">Start</button>
+        </div>
+        <div class="action-card host">
+          <img class="ac-icon" src="/icons/fireball.svg" />
+          <span class="ac-title">HOST</span>
+          <span class="ac-desc">Create a room for friends</span>
+          <button id="btn-host">Create</button>
+        </div>
+        <div class="action-card join">
+          <img class="ac-icon" src="/icons/swap.svg" />
+          <span class="ac-title">JOIN</span>
+          <span class="ac-desc">Enter a friend's code</span>
+          <button id="btn-join">Enter Code</button>
+        </div>
       </div>
 
       <!-- Join input (hidden initially) -->
-      <div id="join-section" style="display:none;">
-        <input type="text" id="join-code-input" placeholder="Enter game code" maxlength="8" />
-        <button id="btn-join-confirm">Connect</button>
-        <button id="btn-back" style="background:#555;">Back</button>
+      <div id="join-section">
+        <input type="text" id="join-code-input" placeholder="GAME CODE" maxlength="8" />
+        <div class="flex-btns">
+          <button id="btn-join-confirm" class="primary-btn">Connect</button>
+          <button id="btn-back" class="secondary-btn">Back</button>
+        </div>
       </div>
 
       <!-- Host waiting room (hidden initially) -->
-      <div id="host-section" style="display:none;">
-        <p style="color:#888; font-size:0.85em;">Share this code with other players:</p>
+      <div id="host-section">
+        <div class="code-label">Share this code</div>
         <div id="game-code-display"></div>
         <ul id="player-list"></ul>
-        <button id="btn-start" disabled>Start Game</button>
+        <button id="btn-start" class="primary-btn" disabled>Start Game</button>
       </div>
 
       <!-- Client waiting room -->
-      <div id="client-section" style="display:none;">
-        <p style="color:#888;">Waiting for host to start...</p>
+      <div id="client-section">
+        <div class="code-label">Connected — Waiting for host</div>
         <ul id="client-player-list"></ul>
       </div>
 
       <div id="lobby-status"></div>
-      <div style="margin-top:12px;">
-        <a href="/about.html" style="color:#4fc3f7; font-size:0.8em; margin-right:12px;">About</a>
-        <a href="/privacy.html" target="_blank" style="color:#555; font-size:0.7em;">Privacy Policy</a>
+
+      <div class="footer">
+        <a href="/about.html">About</a>
+        <a href="/privacy.html" target="_blank">Privacy</a>
       </div>
     </div>
   </div>
+
+  <script>
+    // Randomize cosmetics — picks a random option in each cosmetic select and fires change events
+    // so LobbyManager's preview redraw runs.
+    (function setupRandomize() {
+      const btn = document.getElementById('btn-randomize');
+      if (!btn) return;
+      const ids = ['cosmetic-hat', 'cosmetic-eyes', 'cosmetic-mouth', 'cosmetic-trail', 'cosmetic-aura'];
+      btn.addEventListener('click', () => {
+        ids.forEach((id) => {
+          const sel = document.getElementById(id);
+          if (!sel || !sel.options.length) return;
+          const idx = Math.floor(Math.random() * sel.options.length);
+          sel.selectedIndex = idx;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        // If customize panel is collapsed, briefly flash the preview frame so users see a change
+        const frame = document.querySelector('.preview-frame');
+        if (frame) {
+          frame.style.transition = 'box-shadow .25s';
+          frame.style.boxShadow = '0 0 0 2px #4fc3f7, 0 0 30px rgba(79,195,247,0.35) inset';
+          setTimeout(() => { frame.style.boxShadow = ''; }, 260);
+        }
+      });
+    })();
+
+    // Whole-card clickability — clicking anywhere on an action card triggers its inner button.
+    (function setupCardClicks() {
+      document.querySelectorAll('.action-card').forEach((card) => {
+        card.addEventListener('click', (e) => {
+          // If the click landed on the button itself (or inside it), let the native click run.
+          if (e.target.closest('button')) return;
+          const btn = card.querySelector('button');
+          if (btn) btn.click();
+        });
+      });
+    })();
+  </script>
 
   <script type="module" src="/src/main.js"></script>
 </body>

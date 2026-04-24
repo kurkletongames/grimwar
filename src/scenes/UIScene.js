@@ -1307,9 +1307,9 @@ export class UIScene extends Phaser.Scene {
     this.swapConfirmContainer.add(cardZone);
 
     // Title
-    const titleY = -cardH / 2 + 26;
+    const titleY = -cardH / 2 + 28;
     this.swapConfirmContainer.add(this.add.text(0, titleY, 'REPLACE ABILITY?', {
-      fontSize: '22px', color: hasUpgrades ? '#ff6b35' : '#e94560', fontStyle: 'bold',
+      fontSize: '24px', color: hasUpgrades ? '#ff6b35' : '#e94560', fontStyle: 'bold',
     }).setOrigin(0.5));
 
     // Current -> new layout
@@ -1319,12 +1319,12 @@ export class UIScene extends Phaser.Scene {
     const rightX = 130;
 
     this._drawIconOnContainer(this.swapConfirmContainer, leftX, slotY, iconSize, currentDef, 0.25);
-    this.swapConfirmContainer.add(this.add.text(leftX, slotY + 50, currentDef.name, {
-      fontSize: '16px', color: '#fff', fontStyle: 'bold',
+    this.swapConfirmContainer.add(this.add.text(leftX, slotY + 52, currentDef.name, {
+      fontSize: '18px', color: '#fff', fontStyle: 'bold',
     }).setOrigin(0.5));
     const tierLabel = currentTier > 0 ? `Level ${currentTier}` : 'Base (no upgrades)';
-    this.swapConfirmContainer.add(this.add.text(leftX, slotY + 70, tierLabel, {
-      fontSize: '13px', color: currentTier > 0 ? '#ffd77a' : '#9fb4d6', fontStyle: currentTier > 0 ? 'bold' : 'normal',
+    this.swapConfirmContainer.add(this.add.text(leftX, slotY + 74, tierLabel, {
+      fontSize: '14px', color: currentTier > 0 ? '#ffd77a' : '#9fb4d6', fontStyle: currentTier > 0 ? 'bold' : 'normal',
     }).setOrigin(0.5));
 
     // Arrow
@@ -1334,11 +1334,11 @@ export class UIScene extends Phaser.Scene {
     this.swapConfirmContainer.add(arrow);
 
     this._drawIconOnContainer(this.swapConfirmContainer, rightX, slotY, iconSize, newDef, 0.25);
-    this.swapConfirmContainer.add(this.add.text(rightX, slotY + 50, newDef.name, {
-      fontSize: '16px', color: '#fff', fontStyle: 'bold',
+    this.swapConfirmContainer.add(this.add.text(rightX, slotY + 52, newDef.name, {
+      fontSize: '18px', color: '#fff', fontStyle: 'bold',
     }).setOrigin(0.5));
-    this.swapConfirmContainer.add(this.add.text(rightX, slotY + 70, `${newDef.shopPrice}g`, {
-      fontSize: '14px', color: '#ffa726', fontStyle: 'bold',
+    this.swapConfirmContainer.add(this.add.text(rightX, slotY + 74, `${newDef.shopPrice}g`, {
+      fontSize: '15px', color: '#ffa726', fontStyle: 'bold',
     }).setOrigin(0.5));
 
     // Warning banner — prominent when tier progress is being lost
@@ -1364,12 +1364,12 @@ export class UIScene extends Phaser.Scene {
       warnTri.fillRect(triX - 1.5, triY + 5, 3, 3);
       this.swapConfirmContainer.add(warnTri);
 
-      this.swapConfirmContainer.add(this.add.text(triX + 20, bannerY + 10, 'UPGRADES WILL BE LOST', {
-        fontSize: '15px', color: '#ff9966', fontStyle: 'bold',
+      this.swapConfirmContainer.add(this.add.text(triX + 20, bannerY + 8, 'UPGRADES WILL BE LOST', {
+        fontSize: '17px', color: '#ff9966', fontStyle: 'bold',
       }));
       const detail = `Level ${currentTier} progress (${goldInvested}g invested) will not be refunded.`;
-      this.swapConfirmContainer.add(this.add.text(triX + 20, bannerY + 32, detail, {
-        fontSize: '12px', color: '#ffccaa',
+      this.swapConfirmContainer.add(this.add.text(triX + 20, bannerY + 34, detail, {
+        fontSize: '14px', color: '#ffccaa',
       }));
     }
 
@@ -1389,7 +1389,7 @@ export class UIScene extends Phaser.Scene {
     drawCancel(false);
     this.swapConfirmContainer.add(cancelBg);
     this.swapConfirmContainer.add(this.add.text(-gap / 2 - btnW / 2, btnY + btnH / 2, 'CANCEL', {
-      fontSize: '17px', color: '#ddd', fontStyle: 'bold',
+      fontSize: '19px', color: '#ddd', fontStyle: 'bold',
     }).setOrigin(0.5));
     const cancelZone = this.add.zone(-gap / 2 - btnW / 2, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
     this.swapConfirmContainer.add(cancelZone);
@@ -1412,7 +1412,7 @@ export class UIScene extends Phaser.Scene {
     this.swapConfirmContainer.add(confirmBg);
     const confirmLabel = hasUpgrades ? 'REPLACE & LOSE UPGRADES' : 'REPLACE';
     this.swapConfirmContainer.add(this.add.text(gap / 2 + btnW / 2, btnY + btnH / 2, confirmLabel, {
-      fontSize: hasUpgrades ? '13px' : '17px', color: '#ffdddd', fontStyle: 'bold',
+      fontSize: hasUpgrades ? '14px' : '19px', color: '#ffdddd', fontStyle: 'bold',
     }).setOrigin(0.5));
     const confirmZone = this.add.zone(gap / 2 + btnW / 2, btnY + btnH / 2, btnW, btnH).setInteractive({ useHandCursor: true });
     this.swapConfirmContainer.add(confirmZone);
@@ -1465,6 +1465,11 @@ export class UIScene extends Phaser.Scene {
     fallback.fillCircle(cx, cy, size / 2);
     this.shopContainer.add(fallback);
     return fallback;
+  }
+
+  _ellide(text, maxChars) {
+    if (!text) return '';
+    return text.length > maxChars ? text.slice(0, Math.max(1, maxChars - 1)) + '…' : text;
   }
 
   _drawTierPips(x, y, count, max, color) {
@@ -1529,11 +1534,11 @@ export class UIScene extends Phaser.Scene {
     coin.strokeCircle(goldPillX + 20, headerY, 10);
     this.shopContainer.add(coin);
     this.shopContainer.add(this.add.text(goldPillX + 38, headerY, `${gold} GOLD`, {
-      fontSize: '20px', color: '#ffd77a', fontStyle: 'bold',
+      fontSize: '22px', color: '#ffd77a', fontStyle: 'bold',
     }).setOrigin(0, 0.5));
 
     this.shopContainer.add(this.add.text(0, headerY, 'SHOP', {
-      fontSize: '32px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 3,
+      fontSize: '34px', color: '#e94560', fontStyle: 'bold', stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5));
 
     const timerPillW = 90, timerPillH = 36;
@@ -1548,7 +1553,7 @@ export class UIScene extends Phaser.Scene {
     if (!this._shopStartTime) this._shopStartTime = Date.now();
     const startTime = this._shopStartTime;
     const timerText = this.add.text(timerPillX + timerPillW / 2, headerY, '30s', {
-      fontSize: '20px', color: '#ccc', fontStyle: 'bold',
+      fontSize: '22px', color: '#ccc', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.shopContainer.add(timerText);
     if (this._shopTimerEvent) this._shopTimerEvent.remove();
@@ -1575,9 +1580,9 @@ export class UIScene extends Phaser.Scene {
     const totalColW = w - 2 * sideMargin - (colCount - 1) * colGap;
     const colW = totalColW / colCount;
 
-    const headerBoxH = 52;
-    const equippedCardH = 168;
-    const swapSectionH = 136;
+    const headerBoxH = 56;
+    const equippedCardH = 182;
+    const swapSectionH = 144;
 
     columns.forEach((entry, ci) => {
       const colX = -w / 2 + sideMargin + ci * (colW + colGap);
@@ -1600,11 +1605,11 @@ export class UIScene extends Phaser.Scene {
         ? SPELL_CATEGORIES[entry.slotKey].label
         : 'Movement';
 
-      this.shopContainer.add(this.add.text(colX + 14, contentTop + 10, titleText, {
-        fontSize: '17px', color: '#fff', fontStyle: 'bold',
+      this.shopContainer.add(this.add.text(colX + 14, contentTop + 8, titleText, {
+        fontSize: '19px', color: '#fff', fontStyle: 'bold',
       }));
-      this.shopContainer.add(this.add.text(colX + 14, contentTop + 30, subText, {
-        fontSize: '13px', color: colorHex, fontStyle: 'bold',
+      this.shopContainer.add(this.add.text(colX + 14, contentTop + 31, subText, {
+        fontSize: '14px', color: colorHex, fontStyle: 'bold',
       }));
 
       const badgeW = entry.keyLabel.length > 1 ? 36 : 26;
@@ -1618,7 +1623,7 @@ export class UIScene extends Phaser.Scene {
       badge.strokeRoundedRect(badgeX, badgeY, badgeW, badgeH, 5);
       this.shopContainer.add(badge);
       this.shopContainer.add(this.add.text(badgeX + badgeW / 2, badgeY + badgeH / 2, entry.keyLabel, {
-        fontSize: entry.keyLabel.length > 1 ? '12px' : '15px', color: '#fff', fontStyle: 'bold',
+        fontSize: entry.keyLabel.length > 1 ? '13px' : '17px', color: '#fff', fontStyle: 'bold',
       }).setOrigin(0.5));
 
       // --- Equipped card ---
@@ -1642,12 +1647,14 @@ export class UIScene extends Phaser.Scene {
         const iconY = eqTop + 18 + iconSize / 2;
         this._drawSpellIcon(iconX, iconY, iconSize, eqDef, { halo: 0.2 });
 
-        this.shopContainer.add(this.add.text(iconX + iconSize / 2 + 12, eqTop + 22, eqDef.name, {
-          fontSize: '17px', color: '#fff', fontStyle: 'bold',
+        const nameAvailW = colW - (iconX + iconSize / 2 + 12 - colX) - 16;
+        this.shopContainer.add(this.add.text(iconX + iconSize / 2 + 12, eqTop + 20, this._ellide(eqDef.name, 14), {
+          fontSize: '19px', color: '#fff', fontStyle: 'bold',
+          wordWrap: { width: nameAvailW }, maxLines: 1,
         }));
         const tierTxt = eqTier >= MAX_TIER ? 'MAX LEVEL' : `Level ${eqTier}`;
-        this.shopContainer.add(this.add.text(iconX + iconSize / 2 + 12, eqTop + 44, tierTxt, {
-          fontSize: '12px', color: '#9fb4d6', fontStyle: 'bold',
+        this.shopContainer.add(this.add.text(iconX + iconSize / 2 + 12, eqTop + 46, tierTxt, {
+          fontSize: '14px', color: '#9fb4d6', fontStyle: 'bold',
         }));
 
         const hasTiers = eqDef.tiers && Object.keys(eqDef.tiers).length > 0;
@@ -1655,13 +1662,14 @@ export class UIScene extends Phaser.Scene {
           this._drawTierPips(colX + 18, eqTop + 92, eqTier, MAX_TIER, eqDef.color);
         }
 
+
         const nextT = eqTier + 1;
         const maxed = !hasTiers || nextT > MAX_TIER;
         const tierDef = maxed ? null : eqDef.tiers[nextT];
         const upBtnX = colX + 10;
-        const upBtnY = eqTop + 110;
+        const upBtnY = eqTop + 108;
         const upBtnW = colW - 20;
-        const upBtnH = 48;
+        const upBtnH = 66;
 
         if (maxed) {
           const maxBg = this.add.graphics();
@@ -1672,7 +1680,7 @@ export class UIScene extends Phaser.Scene {
           this.shopContainer.add(maxBg);
           const maxLabel = hasTiers ? 'FULLY UPGRADED' : 'NO UPGRADES';
           this.shopContainer.add(this.add.text(upBtnX + upBtnW / 2, upBtnY + upBtnH / 2, maxLabel, {
-            fontSize: '13px', color: '#88cc88', fontStyle: 'bold',
+            fontSize: '15px', color: '#88cc88', fontStyle: 'bold',
           }).setOrigin(0.5));
         } else {
           const canAfford = gold >= tierDef.price;
@@ -1688,15 +1696,15 @@ export class UIScene extends Phaser.Scene {
           drawUp(false);
           this.shopContainer.add(upBg);
 
-          this.shopContainer.add(this.add.text(upBtnX + 10, upBtnY + 6, `UPGRADE to Lv${nextT}`, {
-            fontSize: '12px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
+          this.shopContainer.add(this.add.text(upBtnX + 10, upBtnY + 8, `UPGRADE to Lv${nextT}`, {
+            fontSize: '14px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
           }));
-          this.shopContainer.add(this.add.text(upBtnX + upBtnW - 10, upBtnY + 6, `${tierDef.price}g`, {
-            fontSize: '14px', color: canAfford ? '#ffd77a' : '#666', fontStyle: 'bold',
+          this.shopContainer.add(this.add.text(upBtnX + upBtnW - 10, upBtnY + 8, `${tierDef.price}g`, {
+            fontSize: '16px', color: canAfford ? '#ffd77a' : '#666', fontStyle: 'bold',
           }).setOrigin(1, 0));
-          this.shopContainer.add(this.add.text(upBtnX + 10, upBtnY + 24, tierDef.desc, {
-            fontSize: '11px', color: canAfford ? '#ddd' : '#666',
-            wordWrap: { width: upBtnW - 20 },
+          this.shopContainer.add(this.add.text(upBtnX + 10, upBtnY + 30, this._ellide(tierDef.desc, 58), {
+            fontSize: '13px', color: canAfford ? '#ddd' : '#666',
+            wordWrap: { width: upBtnW - 20 }, maxLines: 2,
           }));
 
           if (canAfford) {
@@ -1713,7 +1721,7 @@ export class UIScene extends Phaser.Scene {
         }
       } else {
         this.shopContainer.add(this.add.text(cx, eqTop + equippedCardH / 2, 'Pick an ability\nfrom below', {
-          fontSize: '13px', color: '#667', fontStyle: 'italic', align: 'center',
+          fontSize: '15px', color: '#889', fontStyle: 'italic', align: 'center',
         }).setOrigin(0.5));
       }
 
@@ -1721,7 +1729,7 @@ export class UIScene extends Phaser.Scene {
       const swapTop = eqTop + equippedCardH + 12;
       const swapLabel = entry.kind === 'blink' ? 'SWAP BLINK' : (eqDef ? 'SWAP FOR' : 'EQUIP');
       this.shopContainer.add(this.add.text(colX + 14, swapTop, swapLabel, {
-        fontSize: '10px', color: '#778', fontStyle: 'bold',
+        fontSize: '12px', color: '#8899b0', fontStyle: 'bold',
       }));
 
       let options = [];
@@ -1735,7 +1743,7 @@ export class UIScene extends Phaser.Scene {
           .filter((d) => d && d.id !== eqId);
       }
 
-      const swRowH = 32;
+      const swRowH = 36;
       const swGap = 4;
       options.forEach((def, i) => {
         const ry = swapTop + 14 + i * (swRowH + swGap);
@@ -1753,12 +1761,14 @@ export class UIScene extends Phaser.Scene {
         drawRow(false);
         this.shopContainer.add(rowBg);
 
-        this._drawSpellIcon(colX + 22, ry + swRowH / 2, 22, def, { halo: 0.15 });
-        this.shopContainer.add(this.add.text(colX + 40, ry + swRowH / 2, def.name, {
-          fontSize: '13px', color: canBuy ? '#fff' : '#777', fontStyle: 'bold',
+        this._drawSpellIcon(colX + 24, ry + swRowH / 2, 24, def, { halo: 0.15 });
+        const swNameW = colW - 44 - 54;
+        this.shopContainer.add(this.add.text(colX + 44, ry + swRowH / 2, this._ellide(def.name, 16), {
+          fontSize: '14px', color: canBuy ? '#fff' : '#889', fontStyle: 'bold',
+          wordWrap: { width: swNameW }, maxLines: 1,
         }).setOrigin(0, 0.5));
         this.shopContainer.add(this.add.text(colX + colW - 14, ry + swRowH / 2, `${def.shopPrice}g`, {
-          fontSize: '13px', color: canBuy ? '#ffa726' : '#666', fontStyle: 'bold',
+          fontSize: '14px', color: canBuy ? '#ffa726' : '#777', fontStyle: 'bold',
         }).setOrigin(1, 0.5));
 
         if (canBuy) {
@@ -1797,26 +1807,21 @@ export class UIScene extends Phaser.Scene {
     const stripTop = contentTop + headerBoxH + 10 + equippedCardH + 12 + swapSectionH + 16;
 
     this.shopContainer.add(this.add.text(-w / 2 + 24, stripTop, 'ULTIMATE', {
-      fontSize: '15px', color: '#ffdd00', fontStyle: 'bold',
+      fontSize: '17px', color: '#ffdd00', fontStyle: 'bold',
     }));
-    const uBadgeX = -w / 2 + 110;
+    const uBadgeX = -w / 2 + 126;
     const uBadge = this.add.graphics();
     uBadge.fillStyle(0x2a2a10, 1);
-    uBadge.fillRoundedRect(uBadgeX, stripTop - 2, 26, 22, 4);
+    uBadge.fillRoundedRect(uBadgeX, stripTop - 2, 28, 24, 4);
     uBadge.lineStyle(1.5, 0xffdd00, 0.85);
-    uBadge.strokeRoundedRect(uBadgeX, stripTop - 2, 26, 22, 4);
+    uBadge.strokeRoundedRect(uBadgeX, stripTop - 2, 28, 24, 4);
     this.shopContainer.add(uBadge);
-    this.shopContainer.add(this.add.text(uBadgeX + 13, stripTop + 9, '5', {
-      fontSize: '14px', color: '#ffdd00', fontStyle: 'bold',
+    this.shopContainer.add(this.add.text(uBadgeX + 14, stripTop + 10, '5', {
+      fontSize: '16px', color: '#ffdd00', fontStyle: 'bold',
     }).setOrigin(0.5));
-    if (hasUlt) {
-      this.shopContainer.add(this.add.text(uBadgeX + 36, stripTop + 9, '(one per game)', {
-        fontSize: '11px', color: '#666', fontStyle: 'italic',
-      }).setOrigin(0, 0.5));
-    }
 
-    const ultCardY = stripTop + 24;
-    const ultCardH = 64;
+    const ultCardY = stripTop + 28;
+    const ultCardH = 72;
     const ultCount = ULTIMATE_IDS.length;
     const ultAvailW = w - 2 * sideMargin;
     const ultCardW = Math.min(260, (ultAvailW - (ultCount - 1) * 10) / ultCount);
@@ -1845,20 +1850,17 @@ export class UIScene extends Phaser.Scene {
       drawCard(false);
       this.shopContainer.add(card);
 
-      this._drawSpellIcon(ux + 28, ultCardY + ultCardH / 2, 38, def, { halo: 0.22 });
+      this._drawSpellIcon(ux + 32, ultCardY + ultCardH / 2, 44, def, { halo: 0.22 });
 
-      this.shopContainer.add(this.add.text(ux + 54, ultCardY + 8, def.name, {
-        fontSize: '14px', color: '#fff', fontStyle: 'bold',
+      this.shopContainer.add(this.add.text(ux + 62, ultCardY + 16, def.name, {
+        fontSize: '16px', color: '#fff', fontStyle: 'bold',
+        wordWrap: { width: ultCardW - 62 - 10 }, maxLines: 1,
       }));
       const priceLabel = isEquipped ? 'EQUIPPED' : `${def.shopPrice}g`;
-      this.shopContainer.add(this.add.text(ux + 54, ultCardY + 26, priceLabel, {
-        fontSize: '13px',
-        color: isEquipped ? '#6af06a' : (canAfford ? '#ffa726' : '#888'),
+      this.shopContainer.add(this.add.text(ux + 62, ultCardY + 40, priceLabel, {
+        fontSize: '15px',
+        color: isEquipped ? '#6af06a' : (canAfford ? '#ffa726' : '#889'),
         fontStyle: 'bold',
-      }));
-      const descTxt = def.desc && def.desc.length > 46 ? def.desc.slice(0, 43) + '...' : (def.desc || '');
-      this.shopContainer.add(this.add.text(ux + 54, ultCardY + 44, descTxt, {
-        fontSize: '10px', color: '#99a',
       }));
 
       if (canBuy) {
@@ -1887,14 +1889,14 @@ export class UIScene extends Phaser.Scene {
     });
 
     // ---- Passive upgrades strip ----
-    const gupTop = ultCardY + ultCardH + 16;
+    const gupTop = ultCardY + ultCardH + 18;
     this.shopContainer.add(this.add.text(-w / 2 + 24, gupTop, 'PASSIVE UPGRADES', {
-      fontSize: '15px', color: '#4fc3f7', fontStyle: 'bold',
+      fontSize: '17px', color: '#4fc3f7', fontStyle: 'bold',
     }));
 
-    const gupCardsY = gupTop + 24;
+    const gupCardsY = gupTop + 28;
     const gupCount = GLOBAL_UPGRADES.length;
-    const gupCardH = 50;
+    const gupCardH = 58;
     const gupCardW = Math.min(300, (ultAvailW - (gupCount - 1) * 10) / gupCount);
     const gupTotalW = gupCardW * gupCount + (gupCount - 1) * 10;
     const gupStartX = -gupTotalW / 2;
@@ -1916,14 +1918,17 @@ export class UIScene extends Phaser.Scene {
       drawG(false);
       this.shopContainer.add(gbg);
 
-      this.shopContainer.add(this.add.text(gx + 12, gupCardsY + 7, upg.title, {
-        fontSize: '14px', color: '#fff', fontStyle: 'bold',
+      const gTextW = gupCardW - 24 - 70; // reserve room for right-aligned price
+      this.shopContainer.add(this.add.text(gx + 14, gupCardsY + 9, upg.title, {
+        fontSize: '16px', color: '#fff', fontStyle: 'bold',
+        wordWrap: { width: gTextW }, maxLines: 1,
       }));
-      this.shopContainer.add(this.add.text(gx + 12, gupCardsY + 27, upg.desc, {
-        fontSize: '11px', color: '#99a',
+      this.shopContainer.add(this.add.text(gx + 14, gupCardsY + 32, upg.desc, {
+        fontSize: '13px', color: '#a8b2d0',
+        wordWrap: { width: gTextW }, maxLines: 1,
       }));
-      this.shopContainer.add(this.add.text(gx + gupCardW - 12, gupCardsY + gupCardH / 2, `${actualPrice}g`, {
-        fontSize: '16px', color: canAfford ? '#ffa726' : '#666', fontStyle: 'bold',
+      this.shopContainer.add(this.add.text(gx + gupCardW - 14, gupCardsY + gupCardH / 2, `${actualPrice}g`, {
+        fontSize: '18px', color: canAfford ? '#ffa726' : '#777', fontStyle: 'bold',
       }).setOrigin(1, 0.5));
 
       if (canAfford) {
@@ -1941,14 +1946,14 @@ export class UIScene extends Phaser.Scene {
 
     // ---- Ready button ----
     const readyBandY = gupCardsY + gupCardH + 24;
-    const finalReadyY = Math.min(readyBandY, h / 2 - 70);
+    const finalReadyY = Math.min(readyBandY, h / 2 - 74);
     const rc = this._shopReadyCount;
     this._shopReadyText = this.add.text(0, finalReadyY, `${rc.ready || 0}/${rc.total || '?'} Players Ready`, {
-      fontSize: '12px', color: '#888',
+      fontSize: '14px', color: '#8899b0', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.shopContainer.add(this._shopReadyText);
 
-    const btnW = 220, btnH = 44;
+    const btnW = 240, btnH = 48;
     const btnY = finalReadyY + 14;
     const readyBtn = this.add.graphics();
     const alreadyReady = this._localReady;
@@ -1964,7 +1969,7 @@ export class UIScene extends Phaser.Scene {
     this.shopContainer.add(readyBtn);
 
     const readyLabel = this.add.text(0, btnY + btnH / 2, alreadyReady ? 'READY!' : 'READY', {
-      fontSize: '20px', color: alreadyReady ? '#aaffaa' : '#44ff44', fontStyle: 'bold',
+      fontSize: '22px', color: alreadyReady ? '#aaffaa' : '#44ff44', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.shopContainer.add(readyLabel);
 

@@ -3108,6 +3108,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  _addVictimUltCharge(victimId, damageTaken) {
+    if (this.gameMode !== 'arena' || !victimId || damageTaken <= 0) return;
+    const current = this.ultCharges.get(victimId) || 0;
+    this.ultCharges.set(victimId, Math.min(100, current + damageTaken * 0.8));
+  }
+
   _executeUltimate(playerId, ultId, targetX, targetY) {
     if (this.gameMode !== 'arena') return;
     const charge = this.ultCharges.get(playerId) || 0;
@@ -3129,9 +3135,13 @@ export class GameScene extends Phaser.Scene {
           const dy = w.y - wizard.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
           if (dist < 150) {
+            const wasAlive = w.alive;
+            w.lastHitBy = playerId;
             w.takeDamage(30);
+            this._addVictimUltCharge(w.playerId, 30);
             const falloff = 1 - (dist / 150) * 0.5;
             w.applyKnockback((dx / dist) * 2500 * falloff, (dy / dist) * 2500 * falloff);
+            if (wasAlive && !w.alive) this._onWizardKill(playerId, w);
           }
         });
         this._drawUltVfx(wizard.x, wizard.y, 'supernova', wizard.color);
@@ -3140,7 +3150,9 @@ export class GameScene extends Phaser.Scene {
       case 'meteor_storm': {
         const enemies = Array.from(this.wizards.values()).filter(w => w.alive && w.playerId !== playerId);
         for (let i = 0; i < 5; i++) {
-          const target = enemies.length > 0 ? enemies[i % enemies.length] : wizard;
+          const target = enemies.length > 0
+            ? enemies[Math.floor(Math.random() * enemies.length)]
+            : wizard;
           const mx = target.x + (Math.random() - 0.5) * 100;
           const my = target.y + (Math.random() - 0.5) * 100;
           const tid = setTimeout(() => {
@@ -3152,8 +3164,12 @@ export class GameScene extends Phaser.Scene {
               const ddy = w.y - my;
               const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
               if (ddist < 80) {
+                const wasAlive = w.alive;
+                w.lastHitBy = playerId;
                 w.takeDamage(20);
+                this._addVictimUltCharge(w.playerId, 20);
                 w.applyKnockback((ddx / ddist) * 1200, (ddy / ddist) * 1200);
+                if (wasAlive && !w.alive) this._onWizardKill(playerId, w);
               }
             });
             this.cameras.main.shake(200, 0.006);
@@ -3166,7 +3182,7 @@ export class GameScene extends Phaser.Scene {
         const dx = targetX - wizard.x;
         const dy = targetY - wizard.y;
         const baseAngle = Math.atan2(dy, dx);
-        const spread = Math.PI * 0.7;
+        const spread = Math.PI * 0.25; // ~45° cone — focused salvo
         for (let i = 0; i < 12; i++) {
           const angle = baseAngle + ((i / 11) - 0.5) * spread;
           const speed = 280 + Math.random() * 60;
@@ -3197,6 +3213,8 @@ export class GameScene extends Phaser.Scene {
         for (let t = 0; t < totalDuration; t += pullInterval) {
           const tid = setTimeout(() => {
             if (this.roundOver) return;
+            const caster = this.wizards.get(playerId);
+            if (!caster || !caster.alive) return;
             this.wizards.forEach(w => {
               if (!w.alive || w.playerId === playerId) return;
               const ddx = bhX - w.x;
@@ -3206,8 +3224,14 @@ export class GameScene extends Phaser.Scene {
                 const strength = pullForce * (1 - ddist / 200);
                 w.knockbackVel.x += (ddx / ddist) * strength;
                 w.knockbackVel.y += (ddy / ddist) * strength;
-                // Small tick damage
-                if (ddist < 50) w.takeDamage(0.5);
+                // Small tick damage within core
+                if (ddist < 50) {
+                  const wasAlive = w.alive;
+                  w.lastHitBy = playerId;
+                  w.takeDamage(0.5);
+                  this._addVictimUltCharge(w.playerId, 0.5);
+                  if (wasAlive && !w.alive) this._onWizardKill(playerId, w);
+                }
               }
             });
           }, t);

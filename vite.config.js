@@ -3,6 +3,8 @@ import { minify as minifyHtml } from 'html-minifier-terser';
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 const htmlMinifyOptions = {
   collapseWhitespace: true,
   removeComments: true,
@@ -40,7 +42,7 @@ function minifyHtmlPlugin() {
 }
 
 export default defineConfig({
-  plugins: [minifyHtmlPlugin()],
+  plugins: [minifyHtmlPlugin(), cloudflare()],
   server: {
     port: 3000,
     open: true,
